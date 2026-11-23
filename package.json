@@ -1,0 +1,39 @@
+{
+  "name": "gnbvg-hostel-system",
+  "version": "1.0.0",
+  "private": true,
+  "description": "GNBVG Hostel Safety, Attendance and Student Movement Management System",
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "start": "node server/index.js",
+    "start:prod": "node server/index.js",
+    "build": "npm --prefix client run build",
+    "dev": "node scripts/dev.js",
+    "build:server": "npm run build --workspace=server",
+    "build:client": "npm run build --workspace=client",
+    "dev:server": "npm run dev --workspace=server",
+    "dev:client": "npm run dev --workspace=client",
+    "prisma:generate": "npm run prisma:generate --workspace=server",
+    "prisma:migrate": "npm run prisma:migrate --workspace=server",
+    "lint": "npm run lint --workspace=server && npm run lint --workspace=client",
+    "test": "npm run test --workspace=server",
+    "import-students": "npm run import-students --workspace=server"
+  },
+  "keywords": [
+    "gprec",
+    "gnbvg",
+    "hostel-safety",
+    "attendance",
+    "geofencing",
+    "face-recognition"
+  ],
+  "author": "GPREC GNBVG Engineering Team",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "jsonwebtoken": "^9.0.3"
+  }
+}

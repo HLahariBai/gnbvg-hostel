@@ -1,0 +1,665 @@
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ==============================================================================
+// ENUMS
+// ==============================================================================
+
+enum Role {
+  STUDENT
+  WARDEN
+  ADMIN
+}
+
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+  INACTIVE
+}
+
+enum StudentStatus {
+  ACTIVE
+  ON_LEAVE
+  EXPELLED
+  ALUMNI
+}
+
+enum OTPPurpose {
+  REGISTRATION
+  PASSWORD_RESET
+  LOGIN_MFA
+}
+
+enum OTPChannel {
+  EMAIL
+  SMS
+  DUAL
+}
+
+enum FaceEnrollmentStatus {
+  ACTIVE
+  PENDING_REVIEW
+  REVOKED
+}
+
+enum AttendanceStatus {
+  PRESENT
+  PENDING_REVIEW
+  REJECTED
+  DUPLICATE
+  NOT_GIVEN
+}
+
+enum VerificationMethod {
+  FACE_GEO_APP
+  WARDEN_MANUAL_OVERRIDE
+  BIOMETRIC_KIOSK
+}
+
+enum LeaveType {
+  HOME_VISIT
+  MEDICAL
+  ACADEMIC
+  EMERGENCY
+  OTHER
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum GatePassType {
+  DAY_PASS
+  NIGHT_OUT_PASS
+}
+
+enum GatePassStatus {
+  PENDING
+  APPROVED
+  CHECKED_OUT
+  RETURNED
+  OVERDUE
+  REJECTED
+}
+
+enum MovementEventType {
+  CHECK_OUT
+  CHECK_IN
+}
+
+enum SOSTriggerType {
+  INSTANT
+  COUNTDOWN_AUTO
+}
+
+enum SOSStatus {
+  TRIGGERED
+  ACKNOWLEDGED
+  RESOLVED
+  FALSE_ALARM
+}
+
+enum TicketCategory {
+  LOCK_SECURITY
+  CCTV_FAULT
+  CORRIDOR_LIGHTING
+  UNAUTHORIZED_VISITOR
+  HARASSMENT_RAGGING
+  MAINTENANCE_OTHER
+}
+
+enum TicketStatus {
+  REPORTED
+  UNDER_REVIEW
+  IN_PROGRESS
+  RESOLVED
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum IntrusionStatus {
+  BLOCKED
+  ACKNOWLEDGED
+  FLAGGED_TO_PRINCIPAL
+  WHITELISTED
+}
+
+// ==============================================================================
+// 1. MASTER INFRASTRUCTURE MODELS
+// ==============================================================================
+
+model Hostel {
+  id                     String   @id @default(cuid())
+  code                   String   @unique
+  name                   String
+  institutionName        String   @default("G. Pulla Reddy Engineering College (Autonomous)")
+  campus                 String   @default("Kurnool")
+  centerLat              Float    @default(15.8344)
+  centerLng              Float    @default(78.0373)
+  geofenceRadiusMeters   Float    @default(200.0)
+  geofencePolygonGeoJson String?  @db.Text
+  timezone               String   @default("Asia/Kolkata")
+  attendanceStart        String   @default("17:00")
+  attendanceEnd          String   @default("19:00")
+  reminderIntervalMin    Int      @default(15)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  blocks   Block[]
+  students Student[]
+
+  @@map("hostels")
+}
+
+model Block {
+  id          String   @id @default(cuid())
+  hostelId    String
+  code        String // "A", "B", "C"
+  name        String // "Arundhathi", "Annapurna", "Anuradha"
+  totalFloors Int      @default(4)
+  totalRooms  Int      @default(100)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  hostel      Hostel       @relation(fields: [hostelId], references: [id], onDelete: Cascade)
+  rooms       Room[]
+  students    Student[]
+  visitorLogs VisitorLog[]
+  sosAlerts   SOSAlert[]
+
+  @@unique([hostelId, code])
+  @@index([hostelId])
+  @@map("blocks")
+}
+
+model Room {
+  id            String   @id @default(cuid())
+  blockId       String
+  roomNumber    String // e.g. "A-101", "B-208"
+  floorNumber   Int
+  capacity      Int      @default(4)
+  occupiedCount Int      @default(0)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  block       Block        @relation(fields: [blockId], references: [id], onDelete: Cascade)
+  students    Student[]
+  visitorLogs VisitorLog[]
+  sosAlerts   SOSAlert[]
+
+  @@unique([blockId, roomNumber])
+  @@index([blockId, floorNumber])
+  @@index([roomNumber])
+  @@map("rooms")
+}
+
+// ==============================================================================
+// 2. HOSTELLER REGISTRY (AUTHORITATIVE REGISTRATION GATEKEEPER)
+// ==============================================================================
+
+model HostellerRegistry {
+  id                 String   @id @default(cuid())
+  registrationNumber String   @unique
+  collegeEmail       String   @unique // Must be @gprec.ac.in
+  studentName        String
+  blockCode          String // "A", "B", "C"
+  roomNumber         String
+  academicYear       Int // 1, 2, 3, 4
+  branch             String // "CSE", "ECE", "EEE", etc.
+  section            String // "A", "B", "C", "D"
+  isRegistered       Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([registrationNumber, collegeEmail])
+  @@index([blockCode])
+  @@index([isRegistered])
+  @@map("hosteller_registry")
+}
+
+// ==============================================================================
+// 3. AUTHENTICATION, USERS & RESIDENT PROFILES
+// ==============================================================================
+
+model User {
+  id           String        @id @default(cuid())
+  email        String        @unique
+  passwordHash String // Argon2id hash
+  role         Role          @default(STUDENT)
+  status       AccountStatus @default(ACTIVE)
+  totpSecret   String? // For privileged admin/warden MFA
+  totpEnabled  Boolean       @default(false)
+  lastLoginAt  DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  studentProfile Student?
+  sessions       Session[]
+  auditLogs      AuditLog[]
+
+  @@index([email])
+  @@index([role, status])
+  @@map("users")
+}
+
+model Student {
+  id                 String        @id @default(cuid())
+  userId             String        @unique
+  registrationNumber String        @unique
+  fullName           String
+  collegeEmail       String        @unique
+  academicYear       Int
+  branch             String
+  section            String
+  primaryPhone       String
+  secondaryPhone     String?
+  permanentAddress   String        @db.Text
+  hostelId           String
+  hostelBlockId      String
+  roomId             String
+  status             StudentStatus @default(ACTIVE)
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  hostel             Hostel              @relation(fields: [hostelId], references: [id], onDelete: Restrict)
+  block              Block               @relation(fields: [hostelBlockId], references: [id], onDelete: Restrict)
+  room               Room                @relation(fields: [roomId], references: [id], onDelete: Restrict)
+  parentGuardian     ParentGuardian?
+  faceEnrollment     FaceEnrollment?
+  attendances        Attendance[]
+  attendanceAttempts AttendanceAttempt[]
+  leaveRequests      LeaveRequest[]
+  gatePasses         GatePass[]
+  movementEvents     MovementEvent[]
+  visitorLogs        VisitorLog[]
+  sosAlerts          SOSAlert[]
+  safetyTickets      SafetyTicket[]
+
+  @@index([registrationNumber])
+  @@index([collegeEmail])
+  @@index([hostelBlockId, roomId])
+  @@index([status])
+  @@index([branch, academicYear])
+  @@map("students")
+}
+
+model ParentGuardian {
+  id               String   @id @default(cuid())
+  studentId        String   @unique
+  fatherName       String?
+  fatherPhone      String?
+  motherName       String?
+  motherPhone      String?
+  guardianName     String?
+  guardianRelation String?
+  guardianPhone    String?
+  permanentAddress String?  @db.Text
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@map("parent_guardians")
+}
+
+model OTPChallenge {
+  id            String     @id @default(cuid())
+  targetEmail   String
+  targetPhone   String?
+  hashedOtp     String
+  purpose       OTPPurpose
+  channel       OTPChannel @default(DUAL)
+  attempts      Int        @default(0)
+  maxAttempts   Int        @default(5)
+  isVerified    Boolean    @default(false)
+  expiresAt     DateTime
+  cooldownUntil DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@index([targetEmail, purpose])
+  @@index([expiresAt, isVerified])
+  @@map("otp_challenges")
+}
+
+model Session {
+  id                String   @id @default(cuid())
+  userId            String
+  refreshTokenHash  String   @unique
+  deviceFingerprint String?
+  ipAddress         String?
+  userAgent         String?
+  isRevoked         Boolean  @default(false)
+  expiresAt         DateTime
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRevoked])
+  @@index([refreshTokenHash])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// ==============================================================================
+// 4. BIOMETRIC FACE ENROLLMENT & RECOGNITION
+// ==============================================================================
+
+model FaceEnrollment {
+  id                    String               @id @default(cuid())
+  studentId             String               @unique
+  templateHash          String
+  templateDataEncrypted String?              @db.Text
+  modelVersion          String               @default("Facenet512-v1")
+  qualityScore          Float
+  status                FaceEnrollmentStatus @default(ACTIVE)
+  enrolledById          String?
+  enrolledAt            DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, status])
+  @@map("face_enrollments")
+}
+
+// ==============================================================================
+// 5. ATTENDANCE & ATTEMPT ORCHESTRATION
+// ==============================================================================
+
+model Attendance {
+  id                 String             @id @default(cuid())
+  studentId          String
+  date               DateTime           @db.Date
+  checkInTime        DateTime           @default(now())
+  latitude           Float
+  longitude          Float
+  accuracyMeters     Float
+  insideGeofence     Boolean            @default(true)
+  faceConfidence     Float              @default(1.0)
+  livenessConfidence Float              @default(1.0)
+  status             AttendanceStatus   @default(PRESENT)
+  verificationMethod VerificationMethod @default(FACE_GEO_APP)
+  verifiedById       String?
+  remarks            String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Restrict)
+
+  @@unique([studentId, date])
+  @@index([date, status])
+  @@index([studentId, date])
+  @@index([status])
+  @@map("attendances")
+}
+
+model AttendanceAttempt {
+  id                 String   @id @default(cuid())
+  studentId          String
+  attemptTimestamp   DateTime @default(now())
+  latitude           Float?
+  longitude          Float?
+  accuracyMeters     Float?
+  insideGeofence     Boolean  @default(false)
+  faceConfidence     Float?
+  livenessConfidence Float?
+  passedLiveness     Boolean  @default(false)
+  passedFaceMatch    Boolean  @default(false)
+  stageFailed        String? // "GEO_LOCATION", "GPS_ACCURACY", "FACE_CAPTURE", "LIVENESS", "FACE_MATCH", "DUPLICATE", "WINDOW_CLOSED"
+  failureReason      String?  @db.Text
+  rawDiagnostics     String?  @db.Text
+  createdAt          DateTime @default(now())
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, attemptTimestamp])
+  @@index([attemptTimestamp])
+  @@map("attendance_attempts")
+}
+
+// ==============================================================================
+// 6. MOVEMENT, LEAVE & DIGITAL GATE PASSES
+// ==============================================================================
+
+model LeaveRequest {
+  id                    String      @id @default(cuid())
+  studentId             String
+  leaveType             LeaveType   @default(HOME_VISIT)
+  reasonCategory        String
+  reasonDetails         String      @db.Text
+  fromDate              DateTime
+  toDate                DateTime
+  expectedReturnDate    DateTime
+  parentConsentVerified Boolean     @default(false)
+  parentConsentMethod   String? // "SMS_OTP", "PHONE_CALL", "PORTAL_CONFIRM"
+  status                LeaveStatus @default(PENDING)
+  approvedById          String?
+  decisionTime          DateTime?
+  decisionRemarks       String?     @db.Text
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+
+  student  Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  gatePass GatePass?
+
+  @@index([studentId, status])
+  @@index([fromDate, toDate])
+  @@index([status])
+  @@map("leave_requests")
+}
+
+model GatePass {
+  id              String         @id @default(cuid())
+  passNumber      String         @unique
+  studentId       String
+  leaveRequestId  String?        @unique
+  passType        GatePassType   @default(DAY_PASS)
+  destination     String
+  reason          String         @db.Text
+  validFrom       DateTime
+  validUntil      DateTime
+  parentConfirmed Boolean        @default(false)
+  status          GatePassStatus @default(PENDING)
+  qrCodeSignature String         @db.Text
+  approvedById    String?
+  checkedOutAt    DateTime?
+  returnedAt      DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  student        Student         @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  leaveRequest   LeaveRequest?   @relation(fields: [leaveRequestId], references: [id], onDelete: SetNull)
+  movementEvents MovementEvent[]
+
+  @@index([passNumber])
+  @@index([studentId, status])
+  @@index([status, validUntil])
+  @@map("gate_passes")
+}
+
+model MovementEvent {
+  id                 String            @id @default(cuid())
+  studentId          String
+  gatePassId         String?
+  eventType          MovementEventType
+  recordedAt         DateTime          @default(now())
+  recordedById       String?
+  checkpointLocation String            @default("MAIN_HOSTEL_GATE")
+  latitude           Float?
+  longitude          Float?
+  deviceId           String?
+  remarks            String?
+
+  student  Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  gatePass GatePass? @relation(fields: [gatePassId], references: [id], onDelete: SetNull)
+
+  @@index([studentId, recordedAt])
+  @@index([gatePassId])
+  @@index([eventType, recordedAt])
+  @@map("movement_events")
+}
+
+model VisitorLog {
+  id            String    @id @default(cuid())
+  visitorName   String
+  idProofType   String // "AADHAAR", "PAN", "VOTER_ID", "COLLEGE_ID"
+  idProofNumber String
+  studentId     String
+  blockId       String
+  roomId        String
+  checkInTime   DateTime  @default(now())
+  checkOutTime  DateTime?
+  purpose       String    @db.Text
+  contactPhone  String
+  recordedById  String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  block   Block   @relation(fields: [blockId], references: [id], onDelete: Restrict)
+  room    Room    @relation(fields: [roomId], references: [id], onDelete: Restrict)
+
+  @@index([studentId])
+  @@index([checkInTime, checkOutTime])
+  @@index([blockId])
+  @@map("visitor_logs")
+}
+
+// ==============================================================================
+// 7. RESIDENT SAFETY, EMERGENCY SOS & INCIDENT TICKETS
+// ==============================================================================
+
+model SOSAlert {
+  id               String         @id @default(cuid())
+  studentId        String
+  blockId          String
+  roomId           String
+  latitude         Float?
+  longitude        Float?
+  triggerType      SOSTriggerType @default(INSTANT)
+  status           SOSStatus      @default(TRIGGERED)
+  acknowledgedById String?
+  acknowledgedAt   DateTime?
+  resolvedById     String?
+  resolvedAt       DateTime?
+  resolutionNotes  String?        @db.Text
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  block   Block   @relation(fields: [blockId], references: [id], onDelete: Restrict)
+  room    Room    @relation(fields: [roomId], references: [id], onDelete: Restrict)
+
+  @@index([status, createdAt])
+  @@index([studentId])
+  @@index([blockId])
+  @@map("sos_alerts")
+}
+
+model SafetyTicket {
+  id                String         @id @default(cuid())
+  ticketNumber      String         @unique
+  studentId         String? // Nullable when isAnonymous is true
+  isAnonymous       Boolean        @default(false)
+  category          TicketCategory
+  title             String
+  description       String         @db.Text
+  status            TicketStatus   @default(REPORTED)
+  priority          Priority       @default(MEDIUM)
+  assignedToId      String?
+  resolvedById      String?
+  resolutionSummary String?        @db.Text
+  resolvedAt        DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  student Student? @relation(fields: [studentId], references: [id], onDelete: SetNull)
+
+  @@index([ticketNumber])
+  @@index([status])
+  @@index([category])
+  @@index([createdAt])
+  @@map("safety_tickets")
+}
+
+model Announcement {
+  id               String   @id @default(cuid())
+  title            String
+  content          String   @db.Text
+  priority         Priority @default(MEDIUM)
+  targetBlockCodes String   @default("ALL") // "ALL" or comma-separated "A,B"
+  validUntil       DateTime
+  isActive         Boolean  @default(true)
+  createdById      String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([isActive, validUntil])
+  @@map("announcements")
+}
+
+// ==============================================================================
+// 8. SECURITY INTRUSION MONITORING & IMMUTABLE AUDIT LOGGING
+// ==============================================================================
+
+model UnauthorizedAccessAttempt {
+  id                 String          @id @default(cuid())
+  attemptedName      String?
+  registrationNumber String?
+  email              String?
+  phone              String?
+  ipAddress          String?
+  userAgent          String?
+  attemptedAt        DateTime        @default(now())
+  failureReason      String          @db.Text
+  status             IntrusionStatus @default(BLOCKED)
+  reviewedById       String?
+  reviewNotes        String?         @db.Text
+  reviewedAt         DateTime?
+
+  @@index([status, attemptedAt])
+  @@index([registrationNumber])
+  @@index([email])
+  @@map("unauthorized_access_attempts")
+}
+
+model AuditLog {
+  id            String   @id @default(cuid())
+  actorId       String?
+  actorRole     String
+  action        String
+  entityName    String
+  entityId      String?
+  ipAddress     String?
+  userAgent     String?
+  previousState String?  @db.Text
+  newState      String?  @db.Text
+  timestamp     DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([actorId, timestamp])
+  @@index([entityName, entityId])
+  @@index([action, timestamp])
+  @@index([timestamp])
+  @@map("audit_logs")
+}
