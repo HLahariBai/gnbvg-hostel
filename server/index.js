@@ -923,6 +923,54 @@ function handleEnrollFace(req, res) {
 app.post('/api/students/enroll-face', handleEnrollFace);
 app.post('/api/student/enroll-face', handleEnrollFace);
 
+// POST /api/warden/students/reset-face (Warden/Admin reset face biometrics for re-enrollment)
+function handleResetFace(req, res) {
+  try {
+    const { roll_number, student_id } = req.body;
+    const targetRoll = (roll_number || '').trim().toUpperCase();
+    const targetId = student_id || '';
+
+    if (!targetRoll && !targetId) {
+      return res.status(400).json({ success: false, error: 'Roll number or student ID is required to reset Face ID.' });
+    }
+
+    let student = null;
+    if (targetRoll) {
+      student = db.prepare('SELECT id, roll_number, name FROM users WHERE roll_number = ?').get(targetRoll);
+    }
+    if (!student && targetId) {
+      student = db.prepare('SELECT id, roll_number, name FROM users WHERE id = ?').get(targetId);
+    }
+
+    if (!student) {
+      return res.status(404).json({ success: false, error: 'Student not found in database.' });
+    }
+
+    db.prepare(`
+      UPDATE users
+      SET face_descriptor = NULL,
+          face_photo = NULL,
+          face_enrolled = 0,
+          face_enroll_attempts = 0
+      WHERE id = ?
+    `).run(student.id);
+
+    console.log(`[FACE RESET] Face biometrics & photo deleted by Warden/Admin for: ${student.roll_number} (${student.name}). Student can now re-enroll.`);
+
+    res.json({
+      success: true,
+      message: `Face ID and photo for ${student.name} (${student.roll_number}) have been deleted. Student can now re-capture and re-enroll with 3 fresh attempts.`,
+      studentId: student.roll_number || student.id,
+    });
+  } catch (err) {
+    console.error('[RESET FACE ERROR]', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+}
+
+app.post('/api/warden/students/reset-face', handleResetFace);
+app.post('/api/students/reset-face', handleResetFace);
+
 // POST /api/attendance/mark & /api/student/mark-attendance
 function handleMarkAttendance(req, res) {
   try {

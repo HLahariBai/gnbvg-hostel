@@ -36,6 +36,7 @@ import {
   Send,
   Calendar,
   Trash2,
+  RotateCcw,
 } from 'lucide-react';
 
 declare const confetti: any;
@@ -341,6 +342,53 @@ export const ZostelHostelPortal: React.FC = () => {
       showToast('Network Error', 'Could not reach server to resolve alert.', 'error');
     } finally {
       setIsResolvingAlert(false);
+    }
+  };
+
+  const [isResettingFace, setIsResettingFace] = useState(false);
+
+  const handleResetFaceId = async (studentId: string, studentName: string) => {
+    const confirmed = window.confirm(
+      `⚠️ Reset Face Biometrics for ${studentName} (${studentId})?\n\nThis will permanently delete their current facial descriptor and photo from the database. The student will be given 3 fresh chances to re-capture and re-enroll their face.`
+    );
+    if (!confirmed) return;
+
+    setIsResettingFace(true);
+    try {
+      const res = await fetch('/api/warden/students/reset-face', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roll_number: studentId }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast('Face ID Reset ✓', `Face biometrics for ${studentName} cleared. Re-enrollment unlocked!`);
+        // If current logged-in student is this student, reset their state too so they can re-enroll immediately
+        if (currentStudent && (currentStudent.id === studentId || currentStudent.roll_number === studentId)) {
+          setCurrentStudent({
+            ...currentStudent,
+            faceEnrolled: false,
+            face_enrolled: 0,
+            face_photo: null,
+            facePhoto: null,
+            face_enroll_attempts: 0,
+          });
+          setEnrollAttemptCount(0);
+          setCapturedPhotoPreview(null);
+          setCapturedDescriptor(null);
+        }
+        if (selectedStudentForIdCard && (selectedStudentForIdCard.id === studentId || selectedStudentForIdCard.roll_number === studentId)) {
+          setSelectedStudentForIdCard(null);
+          setShowSmartIdModal(false);
+        }
+        await fetchWardenDashboard();
+      } else {
+        showToast('Reset Failed', data.error || 'Could not reset Face ID.', 'error');
+      }
+    } catch {
+      showToast('Network Error', 'Could not reach server to reset Face ID.', 'error');
+    } finally {
+      setIsResettingFace(false);
     }
   };
 
@@ -3264,9 +3312,21 @@ export const ZostelHostelPortal: React.FC = () => {
                                   {record.timestamp}
                                 </td>
                                 <td className="py-3.5 px-4 text-right">
-                                  <span className="px-3 py-1 rounded-full text-xs font-extrabold bg-emerald-100 text-emerald-700">
-                                    ✓ {record.method}
-                                  </span>
+                                  <div className="flex items-center justify-end gap-2">
+                                    <span className="px-3 py-1 rounded-full text-xs font-extrabold bg-emerald-100 text-emerald-700">
+                                      ✓ {record.method}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      disabled={isResettingFace}
+                                      onClick={() => handleResetFaceId(student.roll_number || student.id, student.name)}
+                                      className="px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-rose-50 text-amber-800 hover:text-rose-700 border border-amber-200 hover:border-rose-300 text-[11px] font-bold transition flex items-center gap-1 shadow-xs"
+                                      title="Mistaken face? Delete face biometrics & grant re-enrollment"
+                                    >
+                                      <RotateCcw className="w-3 h-3 text-rose-500" />
+                                      <span>Reset Face</span>
+                                    </button>
+                                  </div>
                                 </td>
                               </tr>
                             ))
@@ -3428,10 +3488,22 @@ export const ZostelHostelPortal: React.FC = () => {
                                 </td>
                                 <td className="py-3.5 px-4">
                                   {student.faceEnrolled ? (
-                                    <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1 w-fit">
-                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                                      <span>FRS Enrolled ✓</span>
-                                    </span>
+                                    <div className="flex items-center gap-2">
+                                      <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1 w-fit">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                                        <span>FRS Enrolled ✓</span>
+                                      </span>
+                                      <button
+                                        type="button"
+                                        disabled={isResettingFace}
+                                        onClick={() => handleResetFaceId(student.roll_number || student.id, student.name)}
+                                        className="px-2 py-0.5 rounded-lg bg-amber-50 hover:bg-rose-50 text-amber-800 hover:text-rose-700 border border-amber-200 hover:border-rose-300 text-[10px] font-bold transition flex items-center gap-1 shadow-xs"
+                                        title="Mistaken face? Delete Face ID & grant re-enrollment"
+                                      >
+                                        <RotateCcw className="w-2.5 h-2.5 text-rose-500" />
+                                        <span>Reset</span>
+                                      </button>
+                                    </div>
                                   ) : (
                                     <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-amberwarm-light text-amber-700 border border-amber-200">
                                       Enrollment Pending
@@ -4084,6 +4156,25 @@ export const ZostelHostelPortal: React.FC = () => {
                     {viewingStudent.faceEnrolled ? '✓ FRS Biometric Active' : '⚠ Face Enrollment Pending'}
                   </span>
                 </div>
+
+                {/* Warden / Admin Face Reset Control (For mistaken face enrollments) */}
+                {viewingStudent.faceEnrolled && (
+                  <div className="pt-3 border-t border-orange-200/60 mt-2 text-center">
+                    <button
+                      type="button"
+                      disabled={isResettingFace}
+                      onClick={() => handleResetFaceId(viewingStudent.roll_number || viewingStudent.id, viewingStudent.name)}
+                      className="w-full py-2.5 px-3 rounded-2xl bg-amber-50 hover:bg-rose-50 text-amber-800 hover:text-rose-700 border border-amber-200 hover:border-rose-300 font-extrabold text-xs flex items-center justify-center gap-2 transition shadow-xs disabled:opacity-50"
+                      title="Mistaken photo? Reset Face ID & grant 3 fresh enrollment attempts"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 text-rose-500" />
+                      <span>{isResettingFace ? 'Resetting Face...' : 'Delete Face ID & Allow Re-Enrollment'}</span>
+                    </button>
+                    <p className="text-[10px] text-slate-400 mt-1 font-medium">
+                      Admin / Warden override: clears biometric data if student mistakenly submitted someone else's face
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
