@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>GNBVG Ladies Hostel - Student Portal User Manual</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap');
+
+  @page {
+    size: A4 portrait;
+    margin: 14mm 16mm 14mm 16mm;
+    @bottom-right {
+      content: "Page " counter(page);
+      font-size: 9pt;
+      color: #94a3b8;
+      font-family: 'Plus Jakarta Sans', sans-serif;
+    }
+  }
+
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: #1e293b;
+    background: #ffffff;
+    line-height: 1.55;
+    font-size: 10.5pt;
+  }
+
+  .page-break {
+    page-break-before: always;
+  }
+
+  .no-break {
+    page-break-inside: avoid;
+  }
+
+  /* Header Cover Banner */
+  .cover-banner {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 60%, #0d9488 100%);
+    border-radius: 16px;
+    padding: 24px 28px;
+    color: #ffffff;
+    margin-bottom: 22px;
+    box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.15);
+    border: 1px solid #334155;
+  }
+
+  .college-tag {
+    font-size: 8.5pt;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #38bdf8;
+    font-weight: 800;
+    margin-bottom: 4px;
+    display: inline-block;
+  }
+
+  .cover-title {
+    font-size: 20pt;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    color: #ffffff;
+    margin-bottom: 6px;
+    line-height: 1.2;
+  }
+
+  .cover-subtitle {
+    font-size: 11pt;
+    color: #cbd5e1;
+    font-weight: 500;
+    margin-bottom: 14px;
+  }
+
+  .badge-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 8pt;
+    font-weight: 700;
+  }
+
+  .badge-teal {
+    background: rgba(13, 148, 136, 0.25);
+    color: #5eead4;
+    border: 1px solid rgba(45, 212, 191, 0.4);
+  }
+
+  .badge-coral {
+    background: rgba(249, 115, 22, 0.25);
+    color: #fdba74;
+    border: 1px solid rgba(251, 146, 60, 0.4);
+  }
+
+  .badge-amber {
+    background: rgba(245, 158, 11, 0.25);
+    color: #fde68a;
+    border: 1px solid rgba(251, 191, 36, 0.4);
+  }
+
+  /* Section Styling */
+  h2.section-header {
+    font-size: 13.5pt;
+    font-weight: 800;
+    color: #0f172a;
+    border-bottom: 2px solid #e2e8f0;
+    padding-bottom: 6px;
+    margin-top: 18px;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  h2.section-header .sec-num {
+    background: #0d9488;
+    color: white;
+    font-size: 9pt;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+  }
+
+  h3.sub-header {
+    font-size: 11pt;
+    font-weight: 700;
+    color: #334155;
+    margin-top: 10px;
+    margin-bottom: 6px;
+  }
+
+  p {
+    margin-bottom: 8px;
+    color: #334155;
+  }
+
+  /* Step Boxes */
+  .step-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 10px 0;
+  }
+
+  .step-card {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 12px 14px;
+    display: flex;
+    gap: 12px;
+  }
+
+  .step-icon-num {
+    background: #0d9488;
+    color: #ffffff;
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+    font-size: 10pt;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .step-content {
+    flex: 1;
+  }
+
+  .step-title {
+    font-weight: 700;
+    font-size: 10.5pt;
+    color: #0f172a;
+    margin-bottom: 2px;
+  }
+
+  .step-desc {
+    font-size: 9.5pt;
+    color: #475569;
+    line-height: 1.45;
+  }
+
+  /* Callout Boxes */
+  .callout {
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin: 12px 0;
+    font-size: 9.5pt;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+  }
+
+  .callout-info {
+    background: #f0fdfa;
+    border: 1px solid #99f6e4;
+    color: #115e59;
+  }
+
+  .callout-warning {
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    color: #92400e;
+  }
+
+  .callout-alert {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #991b1b;
+  }
+
+  .callout-icon {
+    font-size: 14pt;
+    line-height: 1;
+    margin-top: 1px;
+  }
+
+  /* Code / Monospace */
+  .mono {
+    font-family: 'JetBrains Mono', monospace;
+    background: #e2e8f0;
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 9pt;
+    font-weight: 600;
+    color: #0f172a;
+  }
+
+  /* Table */
+  table.info-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 10px 0 14px 0;
+    font-size: 9pt;
+  }
+
+  table.info-table th {
+    background: #f1f5f9;
+    padding: 8px 10px;
+    text-align: left;
+    font-weight: 700;
+    color: #334155;
+    border: 1px solid #cbd5e1;
+  }
+
+  table.info-table td {
+    padding: 7px 10px;
+    border: 1px solid #e2e8f0;
+    color: #334155;
+  }
+
+  table.info-table tr:nth-child(even) td {
+    background: #f8fafc;
+  }
+
+  /* Footer */
+  .footer-note {
+    margin-top: 20px;
+    padding-top: 10px;
+    border-top: 1px solid #e2e8f0;
+    font-size: 8.5pt;
+    color: #64748b;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+  <!-- COVER BANNER -->
+  <div class="cover-banner no-break">
+    <div class="college-tag">G. Narayanamma Institute of Technology & Science (Autonomous) &bull; Hyderabad</div>
+    <h1 class="cover-title">GNBVG Ladies Hostel &bull; Student User Manual</h1>
+    <div class="cover-subtitle">Official Resident Guide: Portal Login, Face Biometric Enrollment, Password Recovery &amp; Smart ID Card</div>
+    <div class="badge-row">
+      <span class="badge badge-teal">&bull; FRS 3-Attempt Biometric System</span>
+      <span class="badge badge-coral">&bull; GPS Hostel Geofencing</span>
+      <span class="badge badge-amber">&bull; Self-Service Password Reset via OTP</span>
+    </div>
+  </div>
+
+  <!-- CHAPTER 1: ACCESSING THE PORTAL -->
+  <div class="no-break">
+    <h2 class="section-header">
+      <span class="sec-num">1</span> How to Access the GNBVG Hostel Portal
+    </h2>
+    <p>The GNBVG Hostel Management Portal is accessible from any smartphone, tablet, or laptop connected to the campus Wi-Fi or mobile internet.</p>
+    
+    <table class="info-table">
+      <thead>
+        <tr>
+          <th>Environment</th>
+          <th>Web Portal URL</th>
+          <th>Recommended Browser</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Internet / Mobile Access</strong></td>
+          <td><span class="mono">https://partial-modules-populations-homeland.trycloudflare.com/hostel</span></td>
+          <td>Google Chrome / Apple Safari / Microsoft Edge</td>
+        </tr>
+        <tr>
+          <td><strong>Campus Wi-Fi / LAN</strong></td>
+          <td><span class="mono">http://localhost:5000/hostel</span> (or College Server IP)</td>
+          <td>Chrome or Edge with Camera permissions allowed</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout callout-info">
+      <span class="callout-icon">&#128247;</span>
+      <div>
+        <strong>Camera &amp; GPS Permissions Required:</strong> To perform facial attendance and enrollment, your browser will prompt for <em>Camera Access</em> and <em>Location Access</em>. You must click <strong>"Allow"</strong> when prompted.
+      </div>
+    </div>
+  </div>
+
+  <!-- CHAPTER 2: STUDENT LOGIN GUIDE -->
+  <div class="no-break">
+    <h2 class="section-header">
+      <span class="sec-num">2</span> Step-by-Step Login Procedure
+    </h2>
+    <p>All 916 approved hostel residents are pre-registered on the official hostel database. Follow these steps to sign in:</p>
+
+    <div class="step-grid">
+      <div class="step-card">
+        <div class="step-icon-num">1</div>
+        <div class="step-content">
+          <div class="step-title">Select "Resident Student" Mode</div>
+          <div class="step-desc">On the portal homepage, make sure the <strong>Resident Student</strong> tab is selected (active by default).</div>
+        </div>
+      </div>
+
+      <div class="step-card">
+        <div class="step-icon-num">2</div>
+        <div class="step-content">
+          <div class="step-title">Enter Roll Number or College Email</div>
+          <div class="step-desc">
+            Type your official GNITS Roll Number (e.g., <span class="mono">23251A0501</span>) or your registered college email (e.g., <span class="mono">23251a0501@gnits.ac.in</span>).
+          </div>
+        </div>
+      </div>
+
+      <div class="step-card">
+        <div class="step-icon-num">3</div>
+        <div class="step-content">
+          <div class="step-title">Enter Password</div>
+          <div class="step-desc">Enter your password. If you are logging in for the first time or forgot your password, refer to <strong>Section 4: Password Reset</strong> below.</div>
+        </div>
+      </div>
+
+      <div class="step-card">
+        <div class="step-icon-num">4</div>
+        <div class="step-content">
+          <div class="step-title">Access Personal Resident Dashboard</div>
+          <div class="step-desc">Click <strong>"Sign In to Student Portal"</strong>. Upon successful verification, you will see your Wing Block (Anapurna-A, Arundhathi-B, or Anuradha-C), your Room Number, and your Smart ID status.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="page-break"></div>
+
+  <!-- CHAPTER 3: FRS FACE ENROLLMENT & 3-CHANCE RE-CAPTURE -->
+  <div class="no-break">
+    <h2 class="section-header">
+      <span class="sec-num">3</span> Face Recognition (FRS) Enrollment &amp; 3-Chance Re-capture Workflow
+    </h2>
+    <p>Every resident must complete one-time Facial Biometric Enrollment so the AI camera can record your attendance accurately each evening.</p>
+
+    <div class="callout callout-warning">
+      <span class="callout-icon">&#9888;</span>
+      <div>
+        <strong>Pre-requisites for Face Capture:</strong> Ensure you are in a well-lit area. Remove sunglasses, caps, or heavy scarves. Look straight into the camera lens with a neutral expression.
+      </div>
+    </div>
+
+    <div class="step-grid">
+      <div class="step-card">
+        <div class="step-icon-num">1</div>
+        <div class="step-content">
+          <div class="step-title">Launch Camera in "Biometric Face ID Enrollment"</div>
+          <div class="step-desc">On your student dashboard, locate the <strong>Biometric Face ID Enrollment</strong> card and click <strong>"Open Camera &amp; Start Enrollment"</strong>.</div>
+        </div>
+      </div>
+
+      <div class="step-card">
+        <div class="step-icon-num">2</div>
+        <div class="step-content">
+          <div class="step-title">Align Face in Target Oval &amp; Capture</div>
+          <div class="step-desc">Fit your face inside the green circular target and click <strong>"Capture Photo"</strong>. The AI instantly extracts a 128-dimensional facial biometric descriptor.</div>
+        </div>
+      </div>
+
+      <div class="step-card">
+        <div class="step-icon-num">3</div>
+        <div class="step-content">
+          <div class="step-title">Review Image &amp; Use Re-capture (Max 3 Chances)</div>
+          <div class="step-desc">
+            A preview of your captured photo will be shown. If the photo is blurred or lighting was poor, you can click <strong>"Retake Photo"</strong>. You are granted up to <strong>3 total attempts</strong> to capture your best picture.
+          </div>
+        </div>
+      </div>
+
+      <div class="step-card">
+        <div class="step-icon-num">4</div>
+        <div class="step-content">
+          <div class="step-title">Confirm &amp; Finalize Enrollment</div>
+          <div class="step-desc">
+            Once satisfied, click <strong>"Save &amp; Finalize Enrollment"</strong>. The system saves your photo and biometric descriptor to the database.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h3 class="sub-header" style="margin-top: 14px;">What Happens After Successful Enrollment?</h3>
+    <ul style="padding-left: 20px; font-size: 9.5pt; color: #334155; line-height: 1.6;">
+      <li><strong>Automatic UI Update:</strong> The capture camera is hidden and replaced by a verified badge: <span class="mono" style="color: #0d9488;">&#10003; Smart ID Card and FRS are successfully enrolled</span>.</li>
+      <li><strong>Digital Smart ID Card Generated:</strong> Your verified face photo and unique hostel barcode are embedded directly onto your Digital Smart ID Card.</li>
+      <li><strong>Warden System Sync:</strong> Your status in the Warden Portal automatically updates from <em>Pending</em> to <em>Enrolled</em>.</li>
+    </ul>
+
+    <div class="callout callout-alert">
+      <span class="callout-icon">&#128680;</span>
+      <div>
+        <strong>Mistaken Face Submission? (Security Policy):</strong><br>
+        To prevent student tampering or proxy fraud, <strong>students CANNOT delete or reset their face profile themselves</strong> once finalized. If you accidentally submitted another resident's face or need a re-enrollment, you must meet your <strong>Hostel Wing Warden</strong>. Only the Warden possesses the administrative key to delete the face profile and unlock fresh enrollment chances.
+      </div>
+    </div>
+  </div>
+
+  <!-- CHAPTER 4: HOW TO RESET PASSWORD -->
+  <div class="no-break">
+    <h2 class="section-header">
+      <span class="sec-num">4</span> How to Reset Your Password via 6-Digit OTP
+    </h2>
+    <p>If you forgot your password or need to update it, you can reset it instantly using the automated OTP verification:</p>
+
+    <div class="step-grid">
+      <div class="step-card">
+        <div class="step-icon-num">1</div>
+        <div class="step-content">
+          <div class="step-title">Click "Forgot Password?"</div>
+          <div class="step-desc">On the Student Login box, click the orange <strong>"Forgot Password?"</strong> link located directly beneath the password field.</div>
+        </div>
+      </div>
+
+      <div class="step-card">
+        <div class="step-icon-num">2</div>
+        <div class="step-content">
+          <div class="step-title">Enter Registered Roll Number or Email</div>
+          <div class="step-desc">Type your Roll Number (e.g., <span class="mono">23251A0501</span>) and click <strong>"Send Verification OTP"</strong>.</div>
+        </div>
+      </div>
+
+      <div class="step-card">
+        <div class="step-icon-num">3</div>
+        <div class="step-content">
+          <div class="step-title">Enter the 6-Digit OTP</div>
+          <div class="step-desc">
+            Check your email or screen notification for the secure 6-digit one-time code (e.g., <span class="mono">849201</span>) and enter it into the OTP box.
+          </div>
+        </div>
+      </div>
+
+      <div class="step-card">
+        <div class="step-icon-num">4</div>
+        <div class="step-content">
+          <div class="step-title">Enter &amp; Confirm New Password</div>
+          <div class="step-desc">Type your new password (minimum 6 characters) and click <strong>"Update Password"</strong>. You can now immediately log in with your new credentials.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="page-break"></div>
+
+  <!-- CHAPTER 5: DAILY ATTENDANCE ROUTINE -->
+  <div class="no-break">
+    <h2 class="section-header">
+      <span class="sec-num">5</span> Daily Evening Attendance Routine &amp; Geofencing Rules
+    </h2>
+    <p>Daily biometric roll call is mandatory for all hostel residents residing on campus.</p>
+
+    <table class="info-table">
+      <thead>
+        <tr>
+          <th>Requirement</th>
+          <th>Official Standard</th>
+          <th>Notes / Action Required</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Daily Timing Window</strong></td>
+          <td><strong>05:00 PM – 07:00 PM IST (17:00 – 19:00)</strong></td>
+          <td>Attendance outside this window is locked unless Warden opens an override.</td>
+        </tr>
+        <tr>
+          <td><strong>Geofence Perimeter</strong></td>
+          <td><strong>Within 100 meters</strong> of GNBVG Hostel Wings</td>
+          <td>GPS check verifies you are physically present inside hostel courtyard.</td>
+        </tr>
+        <tr>
+          <td><strong>Verification Method</strong></td>
+          <td><strong>Face Biometric Match (AI Distance &lt; 0.50)</strong></td>
+          <td>Instant scan compares live camera feed against your enrolled face.</td>
+        </tr>
+        <tr>
+          <td><strong>Attendance Status</strong></td>
+          <td>Marked <strong>Present</strong> with precise timestamp</td>
+          <td>Instantly reflected on Warden's live attendance dashboard.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout callout-warning">
+      <span class="callout-icon">&#9888;</span>
+      <div>
+        <strong>Out-of-Range Geofence Breaches:</strong> If a resident attempts to mark attendance while outside the hostel perimeter, the system logs a high-priority <em>Out-of-Range Breach Alert</em> with your exact GPS coordinates directly to the Warden Portal for disciplinary review.
+      </div>
+    </div>
+  </div>
+
+  <!-- CHAPTER 6: SMART ID CARD, OUTPASS & MAINTENANCE -->
+  <div class="no-break">
+    <h2 class="section-header">
+      <span class="sec-num">6</span> Smart ID Card, Outpasses &amp; Maintenance Helpdesk
+    </h2>
+
+    <div class="step-grid">
+      <div class="step-card">
+        <div class="step-icon-num">&#127380;</div>
+        <div class="step-content">
+          <div class="step-title">Digital Smart ID Card</div>
+          <div class="step-desc">
+            Click <strong>"View Smart ID Card"</strong> from your portal to view your official photo ID with your Blood Group, Room Number, Parent Contact, and Warden Signature. You can present this on your phone screen during hostel entry or outing check-ins.
+          </div>
+        </div>
+      </div>
+
+      <div class="step-card">
+        <div class="step-icon-num">&#9992;</div>
+        <div class="step-content">
+          <div class="step-title">Applying for Hostel Outpasses</div>
+          <div class="step-desc">
+            Need to leave campus for vacation, weekend outing, or emergency? Go to <strong>"Outpass Requests"</strong>, select Outing / Home Visit, specify dates, and submit. Your Wing Warden will review and approve it digitally.
+          </div>
+        </div>
+      </div>
+
+      <div class="step-card">
+        <div class="step-icon-num">&#128295;</div>
+        <div class="step-content">
+          <div class="step-title">Room Maintenance Tickets</div>
+          <div class="step-desc">
+            Facing electrical, plumbing, carpentry, or Wi-Fi issues in your room? Post a ticket under <strong>"Maintenance Desk"</strong>. The hostel facility team will be dispatched directly to your room.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CHAPTER 7: HELPDESK & WARDEN DIRECTORY -->
+  <div class="no-break">
+    <h2 class="section-header">
+      <span class="sec-num">7</span> Hostel Administration &amp; Warden Directory
+    </h2>
+    <p>For biometric reset requests, geofence queries, or hostel assistance, contact your respective Wing Warden:</p>
+
+    <table class="info-table">
+      <thead>
+        <tr>
+          <th>Wing / Block</th>
+          <th>Designated Year</th>
+          <th>Hostel Warden</th>
+          <th>Office Location</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Anapurna-A Wing</strong></td>
+          <td>1st &amp; 2nd Year B.Tech</td>
+          <td>Dr. K. Padmavathi</td>
+          <td>Ground Floor, Anapurna Admin Office</td>
+        </tr>
+        <tr>
+          <td><strong>Arundhathi-B Wing</strong></td>
+          <td>2nd &amp; 3rd Year B.Tech</td>
+          <td>Prof. S. Madhavi Latha</td>
+          <td>1st Floor, Arundhathi Warden Suite</td>
+        </tr>
+        <tr>
+          <td><strong>Anuradha-C Wing</strong></td>
+          <td>3rd &amp; Final Year B.Tech</td>
+          <td>Dr. M. Sailaja Kumari</td>
+          <td>Ground Floor, Placement &amp; Senior Block</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="footer-note">
+      &copy; 2026 G. Narayanamma Institute of Technology &amp; Science (Autonomous) &bull; GNBVG Ladies Hostel Management System<br>
+      Developed for Automated Resident Safety, FRS Attendance &amp; Digital Student Services.
+    </div>
+  </div>
+
+</body>
+</html>
