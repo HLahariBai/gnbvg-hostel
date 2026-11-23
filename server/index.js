@@ -9,9 +9,10 @@ const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 
 // Core dependencies
-const express = require('./node_modules/express');
-const cors = require('./node_modules/cors');
-const cookieParser = require('./node_modules/cookie-parser');
+let express, cors, cookieParser;
+try { express = require('express'); } catch { express = require('./node_modules/express'); }
+try { cors = require('cors'); } catch { cors = require('./node_modules/cors'); }
+try { cookieParser = require('cookie-parser'); } catch { cookieParser = require('./node_modules/cookie-parser'); }
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 

@@ -1,7 +1,12 @@
 try { process.loadEnvFile(); } catch {}
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const nodemailer = require('./node_modules/nodemailer');
+let nodemailer;
+try {
+  nodemailer = require('nodemailer');
+} catch {
+  nodemailer = require('./node_modules/nodemailer');
+}
 
 // Configure SMTP credentials (can be set in .env or defaults)
 const SMTP_HOST = process.env.SMTP_HOST || 'smtp.gmail.com';
