@@ -73,7 +73,9 @@ function initDatabase() {
       hostel_id TEXT,
       is_activated INTEGER NOT NULL DEFAULT 0,
       streak INTEGER NOT NULL DEFAULT 1,
-      dinner_rsvp INTEGER NOT NULL DEFAULT 1
+      dinner_rsvp INTEGER NOT NULL DEFAULT 1,
+      face_photo TEXT,
+      face_enroll_attempts INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS attendance (
@@ -145,6 +147,10 @@ function initDatabase() {
     );
     CREATE INDEX IF NOT EXISTS idx_email_otps ON email_otps(email, purpose);
   `);
+
+  // Safe table migrations
+  try { db.exec("ALTER TABLE users ADD COLUMN face_photo TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE users ADD COLUMN face_enroll_attempts INTEGER NOT NULL DEFAULT 0;"); } catch {}
 
   // Initialize or update default hostel settings (Timings & User GPS Geofence)
   const defaultSettings = [
@@ -752,6 +758,9 @@ app.post('/api/auth/login', (req, res) => {
         room: user.room_number,
         face_enrolled: user.face_enrolled === 1,
         faceEnrolled: user.face_enrolled === 1,
+        face_photo: user.face_photo || null,
+        facePhoto: user.face_photo || null,
+        face_enroll_attempts: user.face_enroll_attempts || 0,
         streak: user.streak || 1,
         dinnerRsvp: user.dinner_rsvp === 1,
       },
@@ -827,6 +836,10 @@ app.get('/api/auth/me', (req, res) => {
       block: user.block,
       room_number: user.room_number,
       face_enrolled: user.face_enrolled === 1,
+      faceEnrolled: user.face_enrolled === 1,
+      face_photo: user.face_photo || null,
+      facePhoto: user.face_photo || null,
+      face_enroll_attempts: user.face_enroll_attempts || 0,
       streak: user.streak || 1,
       dinner_rsvp: user.dinner_rsvp === 1,
     },
@@ -846,7 +859,7 @@ app.post('/api/auth/logout', (req, res) => {
 // POST /api/students/enroll-face & /api/student/enroll-face
 function handleEnrollFace(req, res) {
   try {
-    const { face_descriptor, roll_number, student_id } = req.body;
+    const { face_descriptor, roll_number, student_id, face_photo, attempts_used } = req.body;
     const targetRoll = (roll_number || req.user?.roll_number || '').trim().toUpperCase();
     const targetId = student_id || req.user?.id;
 
@@ -868,24 +881,37 @@ function handleEnrollFace(req, res) {
     }
 
     const descriptorJson = JSON.stringify(face_descriptor.map(Number));
+    const finalPhoto = face_photo || student.face_photo || null;
+    const newAttempts = Math.min(Math.max(Number(attempts_used) || (student.face_enroll_attempts || 0) + 1, 1), 3);
 
     const updateRes = db.prepare(`
       UPDATE users
-      SET face_descriptor = ?, face_enrolled = 1
+      SET face_descriptor = ?, face_photo = ?, face_enrolled = 1, face_enroll_attempts = ?
       WHERE id = ?
-    `).run(descriptorJson, student.id);
+    `).run(descriptorJson, finalPhoto, newAttempts, student.id);
 
-    console.log(`[FACE ENROLLED] Successfully saved 128-d face descriptor for: ${student.roll_number} (${student.name}), rows affected: ${updateRes.changes}`);
+    console.log(`[FACE ENROLLED] Successfully saved 128-d face descriptor & photo for: ${student.roll_number} (${student.name}), attempt: ${newAttempts}/3`);
 
     res.json({
       success: true,
-      message: `Biometric face descriptor saved for ${student.name} (${student.roll_number}). Step 2 Daily Attendance Scanner is now unlocked!`,
+      message: `Biometric face profile and Smart ID photo saved for ${student.name} (${student.roll_number}). Smart ID Card and FRS are successfully enrolled!`,
+      attemptsUsed: newAttempts,
+      remainingAttempts: Math.max(0, 3 - newAttempts),
       student: {
         id: student.roll_number,
         roll_number: student.roll_number,
         name: student.name,
+        email: student.email,
+        year: student.year,
+        block: student.block,
+        room_number: student.room_number,
+        room: student.room_number,
         face_enrolled: 1,
         faceEnrolled: true,
+        face_photo: finalPhoto,
+        facePhoto: finalPhoto,
+        face_enroll_attempts: newAttempts,
+        streak: student.streak || 1,
       },
     });
   } catch (err) {
@@ -1218,6 +1244,8 @@ function handleWardenReport(req, res) {
           status: att.status,
           faceDistance: att.face_distance,
           gpsDistance: Math.round(att.gps_distance || 0),
+          face_photo: s.face_photo || null,
+          faceEnrolled: s.face_enrolled === 1,
         });
       }
       // Case 2: Out of Range Breach (High Priority Warden Alert)
@@ -1270,6 +1298,8 @@ function handleWardenReport(req, res) {
           room: s.room_number,
           parent_phone: s.father_phone || s.student_phone || '+91 98490 22110',
           faceEnrolled: s.face_enrolled === 1,
+          face_photo: s.face_photo || null,
+          facePhoto: s.face_photo || null,
           profileStatus: s.face_enrolled === 1 ? 'FRS Enrolled' : 'Enrollment Pending',
           dailyStatus: att && att.status === 'Absent' ? 'Absent' : 'Pending',
           status: att && att.status === 'Absent' ? 'Absent' : 'Pending',
@@ -1319,12 +1349,17 @@ function handleWardenReport(req, res) {
       })),
       allStudents: allStudents.map(s => ({
         id: s.roll_number || s.id,
+        roll_number: s.roll_number,
         name: s.name,
         email: s.email,
         year: formatYr(s.year),
         block: s.block || 'Anapurna-A',
         room: s.room_number || 'A-101',
         faceEnrolled: s.face_enrolled === 1,
+        face_enrolled: s.face_enrolled === 1 ? 1 : 0,
+        face_photo: s.face_photo || null,
+        facePhoto: s.face_photo || null,
+        face_enroll_attempts: s.face_enroll_attempts || 0,
         profileStatus: s.face_enrolled === 1 ? 'FRS Enrolled' : 'Enrollment Pending',
         streak: s.face_enrolled === 1 ? (s.streak || 0) : 0,
         dinnerRsvp: s.dinner_rsvp === 1,

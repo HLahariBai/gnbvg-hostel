@@ -63,6 +63,10 @@ interface StudentUser {
   block: string;
   room: string;
   faceEnrolled: boolean;
+  face_enrolled?: number | boolean;
+  face_photo?: string | null;
+  facePhoto?: string | null;
+  face_enroll_attempts?: number;
   streak: number;
   dinnerRsvp: boolean;
   branch?: string;
@@ -246,6 +250,10 @@ export const ZostelHostelPortal: React.FC = () => {
   // Webcam & FRS Pipeline States
   const [isWebcamActive, setIsWebcamActive] = useState(false);
   const [isEnrollingFace, setIsEnrollingFace] = useState(false);
+  const [enrollAttemptCount, setEnrollAttemptCount] = useState<number>(0);
+  const [capturedPhotoPreview, setCapturedPhotoPreview] = useState<string | null>(null);
+  const [capturedDescriptor, setCapturedDescriptor] = useState<number[] | null>(null);
+  const [selectedStudentForIdCard, setSelectedStudentForIdCard] = useState<StudentUser | null>(null);
   const [frsStep, setFrsStep] = useState<number>(0);
   const [isMarkingFRS, setIsMarkingFRS] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -542,16 +550,24 @@ export const ZostelHostelPortal: React.FC = () => {
       if (res.ok && data.success && data.user) {
         const s: StudentUser = {
           id: data.user.roll_number || data.user.id,
+          roll_number: data.user.roll_number || data.user.id,
           name: data.user.name,
           email: data.user.email,
           year: data.user.year ? `${data.user.year}${data.user.year === '1' ? 'st' : data.user.year === '2' ? 'nd' : data.user.year === '3' ? 'rd' : 'th'} Year` : '2nd Year',
           block: data.user.block || 'Anapurna-A',
           room: data.user.room_number || data.user.room || 'A-101',
           faceEnrolled: Boolean(data.user.face_enrolled || data.user.faceEnrolled),
+          face_enrolled: data.user.face_enrolled === 1 || data.user.faceEnrolled ? 1 : 0,
+          face_photo: data.user.face_photo || data.user.facePhoto || null,
+          facePhoto: data.user.face_photo || data.user.facePhoto || null,
+          face_enroll_attempts: data.user.face_enroll_attempts || 0,
           streak: data.user.streak || 0,
           dinnerRsvp: Boolean(data.user.dinnerRsvp ?? true),
         };
         setCurrentStudent(s);
+        setEnrollAttemptCount(data.user.face_enroll_attempts || 0);
+        setCapturedPhotoPreview(null);
+        setCapturedDescriptor(null);
         showToast('Signed In', `Welcome back, ${s.name}!`);
         return;
       } else {
@@ -724,17 +740,47 @@ export const ZostelHostelPortal: React.FC = () => {
     }
   }, [isWebcamActive]);
 
-  // Capture Face Enrollment (Runs real local face-api or unique biometric vector)
-  const runFaceEnrollment = async () => {
+  // Capture Face Snapshot for Enrollment (Max 3 Chances)
+  const captureFaceSnapshot = async () => {
     if (!currentStudent) return;
+    if (enrollAttemptCount >= 3) {
+      showToast('Limit Reached', 'You have already reached the maximum of 3 capture attempts. Please confirm and save your enrolled photo.', 'warning');
+      return;
+    }
     setIsEnrollingFace(true);
 
     let descriptor: number[] | null = null;
+    let photoDataUrl: string | null = null;
+
     try {
       // 1. Ensure live camera is active
       await ensureWebcamStarted();
 
-      // 2. Load face-api models if available
+      // 2. Offscreen Canvas Snapshot for Smart ID Photo
+      const activeVideo = (videoRef.current && videoRef.current.readyState >= 2)
+        ? videoRef.current
+        : (attendanceVideoRef.current && attendanceVideoRef.current.readyState >= 2)
+        ? attendanceVideoRef.current
+        : null;
+
+      if (activeVideo && activeVideo.videoWidth > 0 && activeVideo.videoHeight > 0) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 320;
+        canvas.height = 320;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          const minDim = Math.min(activeVideo.videoWidth, activeVideo.videoHeight);
+          const sx = (activeVideo.videoWidth - minDim) / 2;
+          const sy = (activeVideo.videoHeight - minDim) / 2;
+          // Mirror horizontally so it matches webcam mirror view
+          ctx.translate(320, 0);
+          ctx.scale(-1, 1);
+          ctx.drawImage(activeVideo, sx, sy, minDim, minDim, 0, 0, 320, 320);
+          photoDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        }
+      }
+
+      // 3. Load face-api models if available
       if (typeof window !== 'undefined' && (window as any).faceapi) {
         const faceapi = (window as any).faceapi;
         try {
@@ -744,12 +790,6 @@ export const ZostelHostelPortal: React.FC = () => {
         } catch (mErr) {
           console.warn('[FACE-API] Model loading note:', mErr);
         }
-
-        const activeVideo = (videoRef.current && videoRef.current.readyState >= 2)
-          ? videoRef.current
-          : (attendanceVideoRef.current && attendanceVideoRef.current.readyState >= 2)
-          ? attendanceVideoRef.current
-          : null;
 
         if (activeVideo) {
           const detection = await faceapi
@@ -773,6 +813,50 @@ export const ZostelHostelPortal: React.FC = () => {
       descriptor = Array.from({ length: 128 }, (_, i) => Math.sin((i + rollSeed) * 0.1) * 0.15 + (Math.random() * 0.01));
     }
 
+    // High quality canvas avatar fallback if camera was unmounted or blank
+    if (!photoDataUrl) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 320;
+      canvas.height = 320;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        const grad = ctx.createLinearGradient(0, 0, 320, 320);
+        grad.addColorStop(0, '#FF5A36');
+        grad.addColorStop(1, '#0D9488');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 320, 320);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 28px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(currentStudent.name.slice(0, 18), 160, 145);
+        ctx.font = '18px monospace';
+        ctx.fillText(currentStudent.id, 160, 185);
+        ctx.font = 'bold 14px sans-serif';
+        ctx.fillText('GNBVG HOSTEL SMART ID', 160, 225);
+        photoDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      }
+    }
+
+    const nextAttempt = Math.min(3, enrollAttemptCount + 1);
+    setEnrollAttemptCount(nextAttempt);
+    setCapturedPhotoPreview(photoDataUrl);
+    setCapturedDescriptor(descriptor);
+    setIsEnrollingFace(false);
+
+    showToast(
+      `Photo Captured (Attempt ${nextAttempt} of 3)`,
+      nextAttempt < 3
+        ? `Review your photo below. You have ${3 - nextAttempt} re-capture chances left if you want to retake.`
+        : 'Maximum 3 attempts reached. Please confirm and save your Smart ID face.',
+      'success'
+    );
+  };
+
+  // Confirm and permanently store face enrollment in database
+  const confirmAndSaveFaceEnrollment = async () => {
+    if (!currentStudent || !capturedPhotoPreview || !capturedDescriptor) return;
+    setIsEnrollingFace(true);
+
     try {
       const res = await fetch('/api/students/enroll-face', {
         method: 'POST',
@@ -780,16 +864,29 @@ export const ZostelHostelPortal: React.FC = () => {
         body: JSON.stringify({
           roll_number: currentStudent.roll_number || currentStudent.id,
           student_id: currentStudent.id,
-          face_descriptor: descriptor,
+          face_descriptor: capturedDescriptor,
+          face_photo: capturedPhotoPreview,
+          attempts_used: enrollAttemptCount,
         }),
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        localStorage.setItem(`gnbvg_face_${currentStudent.id}`, JSON.stringify(descriptor));
-        const updated = { ...currentStudent, faceEnrolled: true };
+        localStorage.setItem(`gnbvg_face_${currentStudent.id}`, JSON.stringify(capturedDescriptor));
+        const updated: StudentUser = {
+          ...currentStudent,
+          faceEnrolled: true,
+          face_enrolled: 1,
+          face_photo: capturedPhotoPreview,
+          facePhoto: capturedPhotoPreview,
+          face_enroll_attempts: enrollAttemptCount,
+        };
         setCurrentStudent(updated);
         setStudents(students.map((s) => (s.id === updated.id ? updated : s)));
-        showToast('Face Enrolled & Stored! ✓', data.message || 'Face template securely saved. Step 2 Attendance is unlocked.');
+        setCapturedPhotoPreview(null);
+        setCapturedDescriptor(null);
+        showToast('Smart ID Card and FRS are successfully enrolled! ✓', data.message || 'Face template & photo securely saved in database.');
+        // Refresh warden dashboard immediately so warden sees enrolled status
+        fetchWardenDashboard();
       } else {
         showToast('Enrollment Failed', data.error || 'Could not save face template in database.', 'error');
       }
@@ -798,6 +895,17 @@ export const ZostelHostelPortal: React.FC = () => {
     } finally {
       setIsEnrollingFace(false);
     }
+  };
+
+  const handleRetakePhoto = () => {
+    if (enrollAttemptCount >= 3) {
+      showToast('No Retakes Left', 'You have already used all 3 chances. Please confirm and save your photo.', 'warning');
+      return;
+    }
+    setCapturedPhotoPreview(null);
+    setCapturedDescriptor(null);
+    ensureWebcamStarted();
+    showToast('Ready to Retake', `Position your face in the viewfinder. Attempt ${enrollAttemptCount + 1} of 3.`, 'warning');
   };
 
   // Run FRS Attendance Check-in (Real GPS + Euclidean distance check + Timing Window Enforcement)
@@ -1983,13 +2091,21 @@ export const ZostelHostelPortal: React.FC = () => {
                 {/* Profile & Streak Header */}
                 <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-teal-950 rounded-3xl p-6 sm:p-8 text-white shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
                   <div className="flex items-center gap-4 sm:gap-5">
-                    <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-3xl bg-gradient-to-br from-coral to-amber-500 flex items-center justify-center font-display font-extrabold text-2xl sm:text-3xl text-white shadow-lg flex-shrink-0">
-                      {currentStudent.name
-                        .split(' ')
-                        .map((n) => n[0])
-                        .join('')
-                        .slice(0, 2)
-                        .toUpperCase()}
+                    <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-3xl bg-gradient-to-br from-coral to-amber-500 flex items-center justify-center font-display font-extrabold text-2xl sm:text-3xl text-white shadow-lg flex-shrink-0 overflow-hidden border-2 border-white/20">
+                      {(currentStudent.face_photo || currentStudent.facePhoto) ? (
+                        <img
+                          src={currentStudent.face_photo || currentStudent.facePhoto || ''}
+                          alt={currentStudent.name}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        currentStudent.name
+                          .split(' ')
+                          .map((n) => n[0])
+                          .join('')
+                          .slice(0, 2)
+                          .toUpperCase()
+                      )}
                     </div>
                     <div className="space-y-1.5">
                       <div className="flex flex-wrap items-center gap-2">
@@ -2046,7 +2162,10 @@ export const ZostelHostelPortal: React.FC = () => {
                     </div>
 
                     <button
-                      onClick={() => setShowSmartIdModal(true)}
+                      onClick={() => {
+                        setSelectedStudentForIdCard(currentStudent);
+                        setShowSmartIdModal(true);
+                      }}
                       className="px-4 py-3 rounded-2xl bg-coral hover:bg-coral-dark text-white text-xs font-extrabold shadow-lg shadow-coral/25 flex items-center gap-2 transition"
                     >
                       <IdCard className="w-4 h-4" />
@@ -2056,6 +2175,8 @@ export const ZostelHostelPortal: React.FC = () => {
                     <button
                       onClick={() => {
                         setCurrentStudent(null);
+                        setCapturedPhotoPreview(null);
+                        setCapturedDescriptor(null);
                         showToast('Signed Out', 'You have been logged out of your student profile.');
                       }}
                       className="px-4 py-3 rounded-2xl bg-rose-500/20 hover:bg-rose-500 text-rose-200 hover:text-white border border-rose-400/30 transition text-xs font-extrabold flex items-center gap-2 shadow-sm"
@@ -2069,86 +2190,219 @@ export const ZostelHostelPortal: React.FC = () => {
 
                 {/* TWO-STEP BIOMETRIC & FRS WORKSPACE */}
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                  {/* STEP 1: MANDATORY FACE ENROLLMENT MODULE */}
-                  <div className="lg:col-span-6 bg-white rounded-3xl p-6 sm:p-8 shadow-lg border border-orange-100 flex flex-col justify-between">
-                    <div>
-                      <div className="flex items-center justify-between gap-2 mb-4">
-                        <span className="px-3 py-1 rounded-full bg-coral-light text-coral text-xs font-extrabold uppercase tracking-wider">
-                          Step 1 • Biometric Setup
-                        </span>
-                        <span
-                          className={`px-3 py-1 rounded-full text-xs font-bold ${
-                            currentStudent.faceEnrolled
-                              ? 'bg-emerald-100 text-emerald-700'
-                              : 'bg-amberwarm-light text-amber-700'
-                          }`}
-                        >
-                          {currentStudent.faceEnrolled ? 'Enrolled ✓' : 'Action Required'}
-                        </span>
-                      </div>
+                  {/* STEP 1: MANDATORY FACE ENROLLMENT MODULE OR CONFIRMATION STATUS CARD */}
+                  <div className="lg:col-span-6 flex flex-col justify-between">
+                    {currentStudent.faceEnrolled ? (
+                      /* POST-ENROLLMENT ENROLLED STATUS CARD (FACE ENROLLMENT BUTTON HIDDEN) */
+                      <div className="h-full bg-gradient-to-br from-white via-emerald-50/40 to-teal-50/50 rounded-3xl p-6 sm:p-8 shadow-lg border-2 border-emerald-200 flex flex-col justify-between">
+                        <div>
+                          <div className="flex items-center justify-between gap-2 mb-4">
+                            <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-extrabold uppercase tracking-wider flex items-center gap-1.5">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>FRS Biometric Profile</span>
+                            </span>
+                            <span className="px-3 py-1 rounded-full bg-emerald-500 text-white text-xs font-extrabold shadow-sm flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>
+                              <span>Enrolled ✓</span>
+                            </span>
+                          </div>
 
-                      <h3 className="font-display font-extrabold text-xl text-slate-900">Mandatory Face Enrollment</h3>
-                      <p className="text-slate-500 text-xs sm:text-sm mt-1">
-                        Capture your facial biometric template once. Uses live webcam or smart studio simulation.
-                      </p>
+                          <div className="p-5 rounded-2xl bg-white border border-emerald-100 shadow-sm space-y-4">
+                            <div className="flex items-center gap-4">
+                              <div className="relative w-20 h-20 rounded-2xl overflow-hidden border-2 border-emerald-500 shadow-md flex-shrink-0 bg-slate-900">
+                                {(currentStudent.face_photo || currentStudent.facePhoto) ? (
+                                  <img
+                                    src={currentStudent.face_photo || currentStudent.facePhoto || ''}
+                                    alt={currentStudent.name}
+                                    className="w-full h-full object-cover"
+                                  />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center font-display font-black text-xl text-emerald-400 bg-slate-800">
+                                    {currentStudent.name.slice(0, 2).toUpperCase()}
+                                  </div>
+                                )}
+                                <div className="absolute bottom-1 right-1 w-4 h-4 rounded-full bg-emerald-500 border-2 border-white flex items-center justify-center">
+                                  <Check className="w-2.5 h-2.5 text-white stroke-[3]" />
+                                </div>
+                              </div>
 
-                      {/* Viewfinder Frame */}
-                      <div className="relative mt-5 rounded-3xl overflow-hidden bg-slate-900 aspect-[4/3] flex items-center justify-center border-2 border-slate-800 shadow-inner">
-                        <video
-                          ref={videoRef}
-                          autoPlay
-                          playsInline
-                          muted
-                          className={`w-full h-full object-cover scale-x-[-1] ${isWebcamActive ? 'block' : 'hidden'}`}
-                        />
-                        {!isWebcamActive && (
-                          <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-b from-slate-800 to-slate-950 p-6 text-center">
-                            <div className="relative w-36 h-36 rounded-full border-4 border-dashed border-coral/70 flex items-center justify-center animate-pulse-ring">
-                              <div className="w-28 h-28 rounded-full bg-gradient-to-tr from-coral/30 to-tealhostel/30 flex items-center justify-center">
-                                <ScanFace className="w-14 h-14 text-white/90" />
+                              <div className="space-y-1">
+                                <div className="inline-flex items-center gap-1 text-[11px] font-extrabold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full">
+                                  <Sparkles className="w-3 h-3 text-emerald-600" />
+                                  <span>Biometric & ID Verified</span>
+                                </div>
+                                <h4 className="font-display font-extrabold text-base sm:text-lg text-slate-900 leading-tight">
+                                  Smart ID Card and FRS are successfully enrolled
+                                </h4>
+                                <p className="text-slate-500 text-xs">
+                                  {currentStudent.roll_number || currentStudent.id} • {currentStudent.block} • Room {currentStudent.room}
+                                </p>
                               </div>
                             </div>
-                            <p className="text-xs font-semibold text-slate-300 mt-4">
-                              {isEnrollingFace
-                                ? 'Extracting 128-point biometric landmarks...'
-                                : currentStudent.faceEnrolled
-                                ? 'Biometric Face Descriptor Saved in Database ✓'
-                                : 'Position face inside the biometric ring'}
-                            </p>
+
+                            <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 text-xs">
+                              <div className="bg-slate-50 p-2.5 rounded-xl">
+                                <span className="text-[10px] uppercase font-bold text-slate-400 block">Biometric Descriptor</span>
+                                <span className="font-bold text-emerald-700">128-D Vector Stored ✓</span>
+                              </div>
+                              <div className="bg-slate-50 p-2.5 rounded-xl">
+                                <span className="text-[10px] uppercase font-bold text-slate-400 block">Daily Attendance Status</span>
+                                <span className="font-bold text-tealhostel">FRS Scanner Unlocked</span>
+                              </div>
+                            </div>
                           </div>
-                        )}
+                        </div>
 
-                        {/* Corner Brackets */}
-                        <div className="absolute top-4 left-4 w-7 h-7 border-t-4 border-l-4 border-coral rounded-tl-xl pointer-events-none" />
-                        <div className="absolute top-4 right-4 w-7 h-7 border-t-4 border-r-4 border-coral rounded-tr-xl pointer-events-none" />
-                        <div className="absolute bottom-4 left-4 w-7 h-7 border-b-4 border-l-4 border-coral rounded-bl-xl pointer-events-none" />
-                        <div className="absolute bottom-4 right-4 w-7 h-7 border-b-4 border-r-4 border-coral rounded-br-xl pointer-events-none" />
-
-                        {isEnrollingFace && (
-                          <div className="absolute left-6 right-6 h-1 bg-gradient-to-r from-transparent via-coral to-transparent shadow-[0_0_15px_#FF5A36] animate-scan-line" />
-                        )}
+                        <div className="mt-6 pt-5 border-t border-emerald-100/80 flex flex-col sm:flex-row items-center justify-between gap-3">
+                          <p className="text-xs text-slate-500 font-medium text-center sm:text-left">
+                            Your verified Smart ID Card is ready for inspection.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedStudentForIdCard(currentStudent);
+                              setShowSmartIdModal(true);
+                            }}
+                            className="w-full sm:w-auto px-5 py-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-tealhostel hover:from-emerald-700 hover:to-teal-800 text-white font-extrabold text-xs sm:text-sm shadow-md shadow-emerald-600/25 flex items-center justify-center gap-2 transition hover:-translate-y-0.5"
+                          >
+                            <IdCard className="w-4 h-4" />
+                            <span>View Smart ID Card</span>
+                          </button>
+                        </div>
                       </div>
-                    </div>
+                    ) : (
+                      /* PRE-ENROLLMENT CAPTURE WORKFLOW WITH 3 RE-CAPTURE CHANCES */
+                      <div className="h-full bg-white rounded-3xl p-6 sm:p-8 shadow-lg border border-orange-100 flex flex-col justify-between">
+                        <div>
+                          <div className="flex items-center justify-between gap-2 mb-4">
+                            <span className="px-3 py-1 rounded-full bg-coral-light text-coral text-xs font-extrabold uppercase tracking-wider">
+                              Step 1 • Biometric Setup
+                            </span>
+                            <span className="px-3 py-1 rounded-full text-xs font-bold bg-amberwarm-light text-amber-700">
+                              {enrollAttemptCount > 0 ? `Attempt ${enrollAttemptCount} of 3` : 'Action Required (Max 3 Chances)'}
+                            </span>
+                          </div>
 
-                    <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <button
-                        type="button"
-                        onClick={toggleWebcam}
-                        className="py-3 px-4 rounded-2xl border-2 border-slate-200 hover:border-slate-300 text-slate-700 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition"
-                      >
-                        <Video className="w-4 h-4 text-coral" />
-                        <span>{isWebcamActive ? 'Stop Webcam' : 'Enable Live Webcam'}</span>
-                      </button>
-                      <button
-                        type="button"
-                        disabled={isEnrollingFace}
-                        onClick={runFaceEnrollment}
-                        className="py-3 px-4 rounded-2xl bg-coral hover:bg-coral-dark text-white font-bold text-xs sm:text-sm shadow-md shadow-coral/25 flex items-center justify-center gap-2 transition disabled:opacity-60"
-                      >
-                        <ScanFace className="w-4 h-4" />
-                        <span>{isEnrollingFace ? 'Capturing...' : 'Capture & Enroll Face'}</span>
-                      </button>
-                    </div>
+                          <h3 className="font-display font-extrabold text-xl text-slate-900">Mandatory Face Enrollment</h3>
+                          <p className="text-slate-500 text-xs sm:text-sm mt-1">
+                            Capture your photo for your Smart ID Card & FRS attendance. You have up to <strong>3 chances</strong> to re-capture if unsatisfied.
+                          </p>
+
+                          {/* Viewfinder Frame (Live Webcam or Captured Preview) */}
+                          <div className="relative mt-5 rounded-3xl overflow-hidden bg-slate-900 aspect-[4/3] flex items-center justify-center border-2 border-slate-800 shadow-inner">
+                            {capturedPhotoPreview ? (
+                              <div className="relative w-full h-full">
+                                <img
+                                  src={capturedPhotoPreview}
+                                  alt="Captured Face Preview"
+                                  className="w-full h-full object-cover"
+                                />
+                                <div className="absolute top-3 left-3 px-3 py-1 rounded-full bg-slate-900/80 backdrop-blur-md text-white text-xs font-extrabold border border-white/20">
+                                  Attempt {enrollAttemptCount} of 3 {enrollAttemptCount < 3 ? `• ${3 - enrollAttemptCount} retakes left` : '• Final Attempt'}
+                                </div>
+                              </div>
+                            ) : (
+                              <>
+                                <video
+                                  ref={videoRef}
+                                  autoPlay
+                                  playsInline
+                                  muted
+                                  className={`w-full h-full object-cover scale-x-[-1] ${isWebcamActive ? 'block' : 'hidden'}`}
+                                />
+                                {!isWebcamActive && (
+                                  <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-b from-slate-800 to-slate-950 p-6 text-center">
+                                    <div className="relative w-36 h-36 rounded-full border-4 border-dashed border-coral/70 flex items-center justify-center animate-pulse-ring">
+                                      <div className="w-28 h-28 rounded-full bg-gradient-to-tr from-coral/30 to-tealhostel/30 flex items-center justify-center">
+                                        <ScanFace className="w-14 h-14 text-white/90" />
+                                      </div>
+                                    </div>
+                                    <p className="text-xs font-semibold text-slate-300 mt-4">
+                                      {isEnrollingFace
+                                        ? 'Capturing facial frame & extracting 128-point biometrics...'
+                                        : 'Position face inside the biometric ring & enable webcam'}
+                                    </p>
+                                  </div>
+                                )}
+                              </>
+                            )}
+
+                            {/* Corner Brackets */}
+                            <div className="absolute top-4 left-4 w-7 h-7 border-t-4 border-l-4 border-coral rounded-tl-xl pointer-events-none" />
+                            <div className="absolute top-4 right-4 w-7 h-7 border-t-4 border-r-4 border-coral rounded-tr-xl pointer-events-none" />
+                            <div className="absolute bottom-4 left-4 w-7 h-7 border-b-4 border-l-4 border-coral rounded-bl-xl pointer-events-none" />
+                            <div className="absolute bottom-4 right-4 w-7 h-7 border-b-4 border-r-4 border-coral rounded-br-xl pointer-events-none" />
+
+                            {isEnrollingFace && (
+                              <div className="absolute left-6 right-6 h-1 bg-gradient-to-r from-transparent via-coral to-transparent shadow-[0_0_15px_#FF5A36] animate-scan-line" />
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Buttons / Controls for Capture vs Retake */}
+                        <div className="mt-6">
+                          {!capturedPhotoPreview ? (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <button
+                                type="button"
+                                onClick={toggleWebcam}
+                                className="py-3 px-4 rounded-2xl border-2 border-slate-200 hover:border-slate-300 text-slate-700 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition"
+                              >
+                                <Video className="w-4 h-4 text-coral" />
+                                <span>{isWebcamActive ? 'Stop Webcam' : 'Enable Live Webcam'}</span>
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isEnrollingFace}
+                                onClick={captureFaceSnapshot}
+                                className="py-3 px-4 rounded-2xl bg-coral hover:bg-coral-dark text-white font-bold text-xs sm:text-sm shadow-md shadow-coral/25 flex items-center justify-center gap-2 transition disabled:opacity-60"
+                              >
+                                <ScanFace className="w-4 h-4" />
+                                <span>{isEnrollingFace ? 'Capturing...' : `Snap Photo (Attempt ${Math.min(3, enrollAttemptCount + 1)}/3)`}</span>
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="space-y-3">
+                              {enrollAttemptCount < 3 ? (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                  <button
+                                    type="button"
+                                    onClick={handleRetakePhoto}
+                                    className="py-3 px-4 rounded-2xl border-2 border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition"
+                                  >
+                                    <span>🔄 Retake Photo ({3 - enrollAttemptCount} left)</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={isEnrollingFace}
+                                    onClick={confirmAndSaveFaceEnrollment}
+                                    className="py-3 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm shadow-md shadow-emerald-600/25 flex items-center justify-center gap-2 transition disabled:opacity-60"
+                                  >
+                                    <Check className="w-4 h-4" />
+                                    <span>{isEnrollingFace ? 'Saving...' : 'Confirm & Save Face'}</span>
+                                  </button>
+                                </div>
+                              ) : (
+                                <div>
+                                  <div className="mb-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold text-center">
+                                    All 3 capture attempts used. Finalize this photo for your Smart ID Card & FRS.
+                                  </div>
+                                  <button
+                                    type="button"
+                                    disabled={isEnrollingFace}
+                                    onClick={confirmAndSaveFaceEnrollment}
+                                    className="w-full py-3.5 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-lg shadow-emerald-600/25 flex items-center justify-center gap-2 transition disabled:opacity-60"
+                                  >
+                                    <CheckCircle2 className="w-5 h-5" />
+                                    <span>{isEnrollingFace ? 'Saving Final Biometrics...' : 'Finalize & Save Smart ID Face'}</span>
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* STEP 2: FRS ATTENDANCE SCANNER */}
@@ -2969,10 +3223,33 @@ export const ZostelHostelPortal: React.FC = () => {
                             presentList.map(({ student, record }) => (
                               <tr key={record.id} className="hover:bg-teal-50/30 transition">
                                 <td className="py-3.5 px-4 font-bold text-slate-900 flex items-center gap-3">
-                                  <span className="w-8 h-8 rounded-full bg-tealhostel-light text-tealhostel font-extrabold text-xs flex items-center justify-center">
-                                    {student.name.slice(0, 2).toUpperCase()}
-                                  </span>
-                                  <span>{student.name}</span>
+                                  {(student.face_photo || student.facePhoto) ? (
+                                    <img
+                                      src={student.face_photo || student.facePhoto || ''}
+                                      alt={student.name}
+                                      className="w-8 h-8 rounded-full object-cover border border-emerald-400 cursor-pointer hover:scale-105 transition shrink-0"
+                                      onClick={() => {
+                                        setSelectedStudentForIdCard(student);
+                                        setShowSmartIdModal(true);
+                                      }}
+                                      title="Click to view Smart ID Card"
+                                    />
+                                  ) : (
+                                    <span className="w-8 h-8 rounded-full bg-tealhostel-light text-tealhostel font-extrabold text-xs flex items-center justify-center shrink-0">
+                                      {student.name.slice(0, 2).toUpperCase()}
+                                    </span>
+                                  )}
+                                  <div
+                                    className="cursor-pointer hover:text-tealhostel transition flex items-center gap-1.5"
+                                    onClick={() => {
+                                      setSelectedStudentForIdCard(student);
+                                      setShowSmartIdModal(true);
+                                    }}
+                                    title="Click to view Smart ID Card"
+                                  >
+                                    <span>{student.name}</span>
+                                    <IdCard className="w-3.5 h-3.5 text-slate-400 hover:text-tealhostel" />
+                                  </div>
                                 </td>
                                 <td className="py-3.5 px-4 font-mono text-xs font-bold text-slate-700">{student.id}</td>
                                 <td className="py-3.5 px-4">
@@ -3112,10 +3389,33 @@ export const ZostelHostelPortal: React.FC = () => {
                             absentList.map((student) => (
                               <tr key={student.id} className="hover:bg-orange-50/40 transition">
                                 <td className="py-3.5 px-4 font-bold text-slate-900 flex items-center gap-3">
-                                  <span className="w-8 h-8 rounded-full bg-coral-light text-coral font-extrabold text-xs flex items-center justify-center">
-                                    {student.name.slice(0, 2).toUpperCase()}
-                                  </span>
-                                  <span>{student.name}</span>
+                                  {(student.face_photo || student.facePhoto) ? (
+                                    <img
+                                      src={student.face_photo || student.facePhoto || ''}
+                                      alt={student.name}
+                                      className="w-8 h-8 rounded-full object-cover border border-emerald-400 cursor-pointer hover:scale-105 transition shrink-0"
+                                      onClick={() => {
+                                        setSelectedStudentForIdCard(student);
+                                        setShowSmartIdModal(true);
+                                      }}
+                                      title="Click to view Smart ID Card"
+                                    />
+                                  ) : (
+                                    <span className="w-8 h-8 rounded-full bg-coral-light text-coral font-extrabold text-xs flex items-center justify-center shrink-0">
+                                      {student.name.slice(0, 2).toUpperCase()}
+                                    </span>
+                                  )}
+                                  <div
+                                    className="cursor-pointer hover:text-coral transition flex items-center gap-1.5"
+                                    onClick={() => {
+                                      setSelectedStudentForIdCard(student);
+                                      setShowSmartIdModal(true);
+                                    }}
+                                    title="Click to view Smart ID Card"
+                                  >
+                                    <span>{student.name}</span>
+                                    <IdCard className="w-3.5 h-3.5 text-slate-400 hover:text-coral" />
+                                  </div>
                                 </td>
                                 <td className="py-3.5 px-4 font-mono text-xs font-bold text-slate-700">{student.id}</td>
                                 <td className="py-3.5 px-4">
@@ -3128,8 +3428,9 @@ export const ZostelHostelPortal: React.FC = () => {
                                 </td>
                                 <td className="py-3.5 px-4">
                                   {student.faceEnrolled ? (
-                                    <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                      FRS Enrolled ✓
+                                    <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1 w-fit">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                                      <span>FRS Enrolled ✓</span>
                                     </span>
                                   ) : (
                                     <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-amberwarm-light text-amber-700 border border-amber-200">
@@ -3685,88 +3986,109 @@ export const ZostelHostelPortal: React.FC = () => {
       )}
 
       {/* SMART ID CARD MODAL */}
-      {showSmartIdModal && currentStudent && (
-        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-sm w-full overflow-hidden shadow-2xl border-2 border-amber-300">
-            <div className="bg-gradient-to-r from-blue-950 via-indigo-900 to-slate-900 p-5 text-white flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center overflow-hidden p-0.5">
-                  <img src="/images/gprec-logo.png" alt="GPREC" className="w-full h-full object-contain" />
-                </div>
-                <div>
-                  <div className="text-[10px] uppercase tracking-widest text-amber-300 font-bold">
-                    G. Pulla Reddy Engg. College
+      {showSmartIdModal && (selectedStudentForIdCard || currentStudent) && (() => {
+        const viewingStudent = selectedStudentForIdCard || currentStudent!;
+        const photo = viewingStudent.face_photo || viewingStudent.facePhoto;
+        return (
+          <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl max-w-sm w-full overflow-hidden shadow-2xl border-2 border-amber-300">
+              <div className="bg-gradient-to-r from-blue-950 via-indigo-900 to-slate-900 p-5 text-white flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center overflow-hidden p-0.5 shadow-sm">
+                    <img src="/images/gprec-logo.png" alt="GPREC" className="w-full h-full object-contain" />
                   </div>
-                  <div className="font-display font-extrabold text-sm">GNBVG Smart Hostel ID</div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-widest text-amber-300 font-bold">
+                      G. Pulla Reddy Engg. College
+                    </div>
+                    <div className="font-display font-extrabold text-sm">GNBVG Smart Hostel ID</div>
+                  </div>
                 </div>
-              </div>
-              <button
-                onClick={() => setShowSmartIdModal(false)}
-                className="w-8 h-8 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center text-white"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="p-6 text-center space-y-4 bg-gradient-to-b from-cream to-orange-50/40">
-              <div className="w-20 h-20 mx-auto rounded-3xl bg-gradient-to-br from-coral to-amber-500 text-white font-display font-extrabold text-2xl flex items-center justify-center shadow-lg">
-                {currentStudent.name
-                  .split(' ')
-                  .map((n) => n[0])
-                  .join('')
-                  .slice(0, 2)
-                  .toUpperCase()}
-              </div>
-              <div>
-                <h4 className="font-display font-extrabold text-xl text-slate-900">{currentStudent.name}</h4>
-                <p className="font-mono text-xs font-extrabold text-coral mt-0.5">{currentStudent.id}</p>
-              </div>
-              <div className="grid grid-cols-3 gap-2 text-xs bg-white p-3 rounded-2xl border border-orange-100 shadow-sm">
-                <div>
-                  <span className="text-[10px] text-slate-400 uppercase block font-bold">Year</span>
-                  <strong className="text-slate-800">{currentStudent.year}</strong>
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-400 uppercase block font-bold">Block</span>
-                  <strong className="text-slate-800">{currentStudent.block}</strong>
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-400 uppercase block font-bold">Room</span>
-                  <strong className="text-slate-800">{currentStudent.room}</strong>
-                </div>
-              </div>
-
-              {/* QR Code SVG */}
-              <div className="p-3 bg-white rounded-2xl border border-slate-200 inline-flex flex-col items-center">
-                <svg viewBox="0 0 100 100" className="w-24 h-24 fill-slate-900">
-                  <rect x="10" y="10" width="25" height="25" rx="3" />
-                  <rect x="15" y="15" width="15" height="15" fill="white" />
-                  <rect x="19" y="19" width="7" height="7" />
-                  <rect x="65" y="10" width="25" height="25" rx="3" />
-                  <rect x="70" y="15" width="15" height="15" fill="white" />
-                  <rect x="74" y="19" width="7" height="7" />
-                  <rect x="10" y="65" width="25" height="25" rx="3" />
-                  <rect x="15" y="70" width="15" height="15" fill="white" />
-                  <rect x="19" y="74" width="7" height="7" />
-                  <rect x="44" y="14" width="12" height="12" />
-                  <rect x="44" y="44" width="14" height="14" />
-                  <rect x="68" y="48" width="18" height="10" />
-                  <rect x="46" y="70" width="14" height="18" />
-                  <rect x="70" y="72" width="18" height="16" />
-                </svg>
-                <span
-                  className={`mt-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold ${
-                    currentStudent.faceEnrolled
-                      ? 'bg-emerald-100 text-emerald-700'
-                      : 'bg-amber-100 text-amber-700'
-                  }`}
+                <button
+                  onClick={() => {
+                    setShowSmartIdModal(false);
+                    setSelectedStudentForIdCard(null);
+                  }}
+                  className="w-8 h-8 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center text-white"
                 >
-                  {currentStudent.faceEnrolled ? '✓ FRS Biometric Active' : '⚠ Face Enrollment Pending'}
-                </span>
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="p-6 text-center space-y-4 bg-gradient-to-b from-cream to-orange-50/40">
+                {/* Real Captured Face Photo or Fallback Initials Avatar */}
+                {photo ? (
+                  <div className="relative w-24 h-24 mx-auto rounded-3xl overflow-hidden border-2 border-amber-400 shadow-xl bg-slate-900 ring-4 ring-amber-100">
+                    <img
+                      src={photo}
+                      alt={viewingStudent.name}
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute top-1 right-1 px-1.5 py-0.5 rounded-full bg-emerald-600 text-[9px] font-extrabold text-white shadow">
+                      FRS ✓
+                    </div>
+                  </div>
+                ) : (
+                  <div className="w-20 h-20 mx-auto rounded-3xl bg-gradient-to-br from-coral to-amber-500 text-white font-display font-extrabold text-2xl flex items-center justify-center shadow-lg">
+                    {viewingStudent.name
+                      .split(' ')
+                      .map((n) => n[0])
+                      .join('')
+                      .slice(0, 2)
+                      .toUpperCase()}
+                  </div>
+                )}
+                <div>
+                  <h4 className="font-display font-extrabold text-xl text-slate-900">{viewingStudent.name}</h4>
+                  <p className="font-mono text-xs font-extrabold text-coral mt-0.5">{viewingStudent.roll_number || viewingStudent.id}</p>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-xs bg-white p-3 rounded-2xl border border-orange-100 shadow-sm">
+                  <div>
+                    <span className="text-[10px] text-slate-400 uppercase block font-bold">Year</span>
+                    <strong className="text-slate-800">{viewingStudent.year}</strong>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 uppercase block font-bold">Block</span>
+                    <strong className="text-slate-800">{viewingStudent.block}</strong>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 uppercase block font-bold">Room</span>
+                    <strong className="text-slate-800">{viewingStudent.room}</strong>
+                  </div>
+                </div>
+
+                {/* QR Code SVG & Biometric Status */}
+                <div className="p-3 bg-white rounded-2xl border border-slate-200 inline-flex flex-col items-center">
+                  <svg viewBox="0 0 100 100" className="w-24 h-24 fill-slate-900">
+                    <rect x="10" y="10" width="25" height="25" rx="3" />
+                    <rect x="15" y="15" width="15" height="15" fill="white" />
+                    <rect x="19" y="19" width="7" height="7" />
+                    <rect x="65" y="10" width="25" height="25" rx="3" />
+                    <rect x="70" y="15" width="15" height="15" fill="white" />
+                    <rect x="74" y="19" width="7" height="7" />
+                    <rect x="10" y="65" width="25" height="25" rx="3" />
+                    <rect x="15" y="70" width="15" height="15" fill="white" />
+                    <rect x="19" y="74" width="7" height="7" />
+                    <rect x="44" y="14" width="12" height="12" />
+                    <rect x="44" y="44" width="14" height="14" />
+                    <rect x="68" y="48" width="18" height="10" />
+                    <rect x="46" y="70" width="14" height="18" />
+                    <rect x="70" y="72" width="18" height="16" />
+                  </svg>
+                  <span
+                    className={`mt-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold ${
+                      viewingStudent.faceEnrolled
+                        ? 'bg-emerald-100 text-emerald-700'
+                        : 'bg-amber-100 text-amber-700'
+                    }`}
+                  >
+                    {viewingStudent.faceEnrolled ? '✓ FRS Biometric Active' : '⚠ Face Enrollment Pending'}
+                  </span>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* FORGOT PASSWORD MODAL */}
       {showForgotModal && (
