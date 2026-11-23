@@ -37,6 +37,8 @@ import {
   Calendar,
   Trash2,
   RotateCcw,
+  Clock,
+  FileText,
 } from 'lucide-react';
 
 declare const confetti: any;
@@ -235,6 +237,13 @@ export const ZostelHostelPortal: React.FC = () => {
 
   // Attendance, Outpasses, Tickets (Synced with SQLite)
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceItem[]>([]);
+  const [myAttendanceLogs, setMyAttendanceLogs] = useState<any[]>([]);
+  const [todayAttendanceStatus, setTodayAttendanceStatus] = useState<{
+    status: string;
+    timestamp?: string;
+    method?: string;
+    date?: string;
+  } | null>(null);
   const [students, setStudents] = useState<StudentUser[]>([]);
   const [outpassRequests, setOutpassRequests] = useState<OutpassItem[]>([]);
   const [maintenanceTickets, setMaintenanceTickets] = useState<TicketItem[]>([]);
@@ -324,6 +333,46 @@ export const ZostelHostelPortal: React.FC = () => {
     }
   };
 
+  // Fetch individual student attendance records from SQLite / Turso cloud database
+  const fetchMyAttendance = async (studentId: string, rollNumber?: string) => {
+    try {
+      const idToQuery = rollNumber || studentId;
+      const res = await fetch(`/api/student/my-attendance?student_id=${encodeURIComponent(idToQuery)}&roll_number=${encodeURIComponent(idToQuery)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.success) {
+          if (Array.isArray(data.records)) {
+            setMyAttendanceLogs(data.records);
+          }
+          if (data.todayRecord) {
+            setTodayAttendanceStatus({
+              status: data.todayRecord.status || 'Present',
+              timestamp: data.todayRecord.timestamp,
+              method: data.todayRecord.is_geofence_breach ? 'FLAGGED (Outside Perimeter)' : 'FRS Biometric + GPS',
+              date: data.todayDate || TODAY_STR,
+            });
+          } else if (data.activeLeave) {
+            setTodayAttendanceStatus({
+              status: 'On Approved Leave',
+              timestamp: `${data.activeLeave.from_date} to ${data.activeLeave.to_date}`,
+              method: data.activeLeave.type || 'Approved Leave',
+              date: data.todayDate || TODAY_STR,
+            });
+          } else {
+            setTodayAttendanceStatus({
+              status: 'Pending Check-In',
+              timestamp: 'Window: 05:00 PM – 07:00 PM IST',
+              method: 'Pending FRS Verification',
+              date: data.todayDate || TODAY_STR,
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch student attendance:', err);
+    }
+  };
+
   const handleResolveAlert = async (attendanceId: string, action: 'approve' | 'mark_absent') => {
     setIsResolvingAlert(true);
     try {
@@ -396,6 +445,12 @@ export const ZostelHostelPortal: React.FC = () => {
   useEffect(() => {
     fetchWardenDashboard();
   }, [wardenDate, wardenYearFilter, wardenBlockFilter, isWardenAuthenticated]);
+
+  useEffect(() => {
+    if (currentStudent) {
+      fetchMyAttendance(currentStudent.id, currentStudent.roll_number);
+    }
+  }, [currentStudent?.id]);
 
   // Check URL parameters & fetch live system settings on mount
   useEffect(() => {
@@ -1095,6 +1150,10 @@ export const ZostelHostelPortal: React.FC = () => {
         } else {
           showToast('Attendance Recorded! ✓', data.message || `${currentStudent.name} marked Present.`);
         }
+
+        // Live refresh student attendance logs & warden dashboard
+        fetchMyAttendance(currentStudent.id, currentStudent.roll_number);
+        fetchWardenDashboard();
       } else {
         setFrsStep(0);
         showToast('Check-in Rejected', data.error || 'Face does not match enrolled template or outside geofence.', 'error');
@@ -2210,35 +2269,35 @@ export const ZostelHostelPortal: React.FC = () => {
                   </div>
 
                   <div className="flex items-center gap-4 self-end md:self-center">
-                    {/* Circular Streak Ring */}
-                    <div className="flex items-center gap-3 bg-white/10 backdrop-blur-md px-4 py-3 rounded-2xl border border-white/10">
-                      <div className="relative w-14 h-14 flex items-center justify-center">
-                        <svg className="w-14 h-14 -rotate-90" viewBox="0 0 36 36">
-                          <path
-                            className="text-slate-700"
-                            strokeWidth="3.5"
-                            stroke="currentColor"
-                            fill="none"
-                            d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                          />
-                          <path
-                            className={currentStudent.faceEnrolled ? "text-coral transition-all duration-700" : "text-slate-600"}
-                            strokeDasharray={currentStudent.faceEnrolled ? `${Math.min(100, (currentStudent.streak / 15) * 100)}, 100` : "0, 100"}
-                            strokeWidth="3.5"
-                            strokeLinecap="round"
-                            stroke="currentColor"
-                            fill="none"
-                            d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                          />
-                        </svg>
-                        <span className="absolute text-xs font-extrabold text-white">
-                          {currentStudent.faceEnrolled ? `${Math.min(100, Math.round((currentStudent.streak / 15) * 100))}%` : "0%"}
-                        </span>
+                    {/* Daily Attendance Status (Percentage hidden until cycle logs reviewed & cleared by warden) */}
+                    <div className="flex items-center gap-3 bg-white/10 backdrop-blur-md px-4 py-3 rounded-2xl border border-white/10 shadow-sm">
+                      <div className="w-12 h-12 rounded-2xl flex items-center justify-center bg-white/15 text-white shrink-0">
+                        {todayAttendanceStatus?.status?.includes('Present') ? (
+                          <CheckCircle2 className="w-7 h-7 text-emerald-400" />
+                        ) : todayAttendanceStatus?.status?.includes('Leave') ? (
+                          <FileText className="w-7 h-7 text-amber-400" />
+                        ) : (
+                          <Clock className="w-7 h-7 text-teal-300" />
+                        )}
                       </div>
                       <div>
-                        <div className="text-[10px] uppercase font-bold text-slate-400">Attendance Streak</div>
-                        <div className="text-sm font-extrabold text-amber-300">
-                          {currentStudent.faceEnrolled ? `${currentStudent.streak} Days Present 🔥` : "Enrollment Required"}
+                        <div className="text-[10px] uppercase font-bold text-slate-300 tracking-wider">Today's Attendance</div>
+                        <div className="text-sm font-extrabold flex items-center gap-1.5 mt-0.5">
+                          <span
+                            className={
+                              todayAttendanceStatus?.status?.includes('Present')
+                                ? 'text-emerald-400'
+                                : todayAttendanceStatus?.status?.includes('Leave')
+                                ? 'text-amber-400'
+                                : 'text-amber-200'
+                            }
+                          >
+                            {todayAttendanceStatus?.status || (currentStudent.faceEnrolled ? 'Pending Check-In' : 'Enrollment Required')}
+                          </span>
+                          {todayAttendanceStatus?.status?.includes('Present') && <span>✓</span>}
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-mono">
+                          {todayAttendanceStatus?.timestamp || 'Window: 05:00 PM – 07:00 PM'}
                         </div>
                       </div>
                     </div>
@@ -2805,11 +2864,11 @@ export const ZostelHostelPortal: React.FC = () => {
                 <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-lg border border-slate-100">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
                     <div>
-                      <h3 className="font-display font-extrabold text-xl text-slate-900">My Attendance History</h3>
-                      <p className="text-xs sm:text-sm text-slate-500">Live synced with GNBVG Central Register</p>
+                      <h3 className="font-display font-extrabold text-xl text-slate-900">My Daily Attendance Register</h3>
+                      <p className="text-xs sm:text-sm text-slate-500">Live synced with GNBVG Cloud Register (Persisted across cycles until Warden clears logs)</p>
                     </div>
                     <span className="px-3.5 py-1.5 rounded-full bg-tealhostel-light text-tealhostel text-xs font-extrabold w-fit">
-                      {attendanceRecords.filter((r) => r.studentId === currentStudent.id).length} Records
+                      {myAttendanceLogs.length > 0 ? myAttendanceLogs.length : attendanceRecords.filter((r) => r.studentId === currentStudent.id).length} Active Records
                     </span>
                   </div>
 
@@ -2825,32 +2884,40 @@ export const ZostelHostelPortal: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-sm">
-                        {attendanceRecords.filter((r) => r.studentId === currentStudent.id).length === 0 ? (
+                        {(myAttendanceLogs.length > 0 ? myAttendanceLogs : attendanceRecords.filter((r) => r.studentId === currentStudent.id)).length === 0 ? (
                           <tr>
                             <td colSpan={5} className="py-8 text-center text-slate-400 text-xs">
-                              No attendance records yet. Complete FRS check-in above!
+                              No attendance records yet in the active cycle. Complete your daily FRS check-in above!
                             </td>
                           </tr>
                         ) : (
-                          attendanceRecords
-                            .filter((r) => r.studentId === currentStudent.id)
-                            .map((rec) => (
-                              <tr key={rec.id} className="hover:bg-orange-50/40 transition">
-                                <td className="py-3.5 px-4 font-bold text-slate-800">{rec.date}</td>
-                                <td className="py-3.5 px-4 font-mono text-xs text-slate-600">{rec.timestamp}</td>
-                                <td className="py-3.5 px-4">
-                                  <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-700">
-                                    {rec.block}
-                                  </span>
-                                </td>
-                                <td className="py-3.5 px-4 text-xs text-slate-500">{rec.method}</td>
-                                <td className="py-3.5 px-4 text-right">
-                                  <span className="px-3 py-1 rounded-full text-xs font-extrabold bg-emerald-100 text-emerald-700">
-                                    ✓ {rec.status}
-                                  </span>
-                                </td>
-                              </tr>
-                            ))
+                          (myAttendanceLogs.length > 0 ? myAttendanceLogs : attendanceRecords.filter((r) => r.studentId === currentStudent.id)).map((rec: any) => (
+                            <tr key={rec.id || `${rec.date}-${rec.timestamp}`} className="hover:bg-orange-50/40 transition">
+                              <td className="py-3.5 px-4 font-bold text-slate-800">{rec.date}</td>
+                              <td className="py-3.5 px-4 font-mono text-xs text-slate-600">{rec.timestamp || '07:30 PM'}</td>
+                              <td className="py-3.5 px-4">
+                                <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-700">
+                                  {rec.block || currentStudent.block}
+                                </span>
+                              </td>
+                              <td className="py-3.5 px-4 text-xs text-slate-500">
+                                {rec.method || (rec.is_geofence_breach ? 'FLAGGED (Outside Perimeter)' : 'FRS Face Tally + GPS')}
+                              </td>
+                              <td className="py-3.5 px-4 text-right">
+                                <span
+                                  className={`px-3 py-1 rounded-full text-xs font-extrabold ${
+                                    String(rec.status).includes('Present')
+                                      ? 'bg-emerald-100 text-emerald-700'
+                                      : String(rec.status).includes('Leave')
+                                      ? 'bg-amber-100 text-amber-700'
+                                      : 'bg-rose-100 text-rose-700'
+                                  }`}
+                                >
+                                  {String(rec.status).includes('Present') ? '✓ ' : ''}{rec.status}
+                                </span>
+                              </td>
+                            </tr>
+                          ))
                         )}
                       </tbody>
                     </table>

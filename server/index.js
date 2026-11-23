@@ -1192,7 +1192,7 @@ app.post('/api/student/mark-attendance', handleMarkAttendance);
 // GET /api/student/my-attendance
 app.get('/api/student/my-attendance', (req, res) => {
   try {
-    const roll = req.query.roll_number || req.user?.roll_number || null;
+    const roll = (req.query.roll_number || req.user?.roll_number || '').trim().toUpperCase();
     const sId = req.query.student_id || req.user?.id || null;
 
     const student = roll
@@ -1205,16 +1205,31 @@ app.get('/api/student/my-attendance', (req, res) => {
       return res.status(404).json({ success: false, error: 'Student not found.' });
     }
 
+    const todayStr = new Date().toISOString().split('T')[0];
+
     const records = db.prepare(`
-      SELECT id, date, timestamp, block, room_number, status
+      SELECT id, date, timestamp, block, room_number, status, is_geofence_breach, face_distance
       FROM attendance
       WHERE student_id = ? OR roll_number = ?
       ORDER BY date DESC, timestamp DESC
-      LIMIT 60
+      LIMIT 90
     `).all(student.id, student.roll_number);
+
+    const todayRecord = records.find((r) => r.date === todayStr);
+
+    const activeLeave = db.prepare(`
+      SELECT * FROM outpasses
+      WHERE (student_id = ? OR roll_number = ?)
+        AND status = 'Approved'
+        AND from_date <= ? AND to_date >= ?
+    `).get(student.id, student.roll_number, todayStr, todayStr);
 
     res.json({
       success: true,
+      todayDate: todayStr,
+      todayStatus: todayRecord ? todayRecord.status : (activeLeave ? 'On Approved Leave' : 'Pending Check-In'),
+      todayRecord: todayRecord || null,
+      activeLeave: activeLeave || null,
       student: {
         id: student.id,
         roll_number: student.roll_number,
@@ -1222,8 +1237,8 @@ app.get('/api/student/my-attendance', (req, res) => {
         year: student.year,
         block: student.block,
         room_number: student.room_number,
-        streak: student.streak || 1,
         face_enrolled: student.face_enrolled === 1,
+        face_photo: student.face_photo || null,
       },
       records,
     });
@@ -1649,6 +1664,7 @@ app.post('/api/warden/attendance/purge-history', (req, res) => {
   try {
     const countBefore = db.prepare('SELECT count(*) as c FROM attendance').get().c;
     const del = db.prepare('DELETE FROM attendance').run();
+    tursoExecuteAsync('DELETE FROM attendance');
     console.log(`[WEEKLY ARCHIVE PURGE] Purged ${del.changes} attendance records. All student face enrollments and roster profiles preserved.`);
     
     res.json({
