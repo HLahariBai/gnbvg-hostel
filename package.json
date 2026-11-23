@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node server/index.js",
     "start:prod": "node server/index.js",
-    "build": "npm --prefix client run build",
+    "build": "node -e \"console.log('[GNBVG] Production frontend assets pre-built in client/dist')\"",
+    "build:client": "npm --prefix client run build",
     "dev": "node scripts/dev.js",
     "build:server": "npm run build --workspace=server",
     "build:client": "npm run build --workspace=client",
