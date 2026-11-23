@@ -20,13 +20,20 @@ const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'gnbvg-super-secret-key-gprec-kurnool-2026';
 
 // -------------------------------------------------------------
-// 1. Permanent SQLite Database Connection (database/gnbvg.db)
+// 1. Permanent SQLite Database Connection (Supports Persistent Disk)
 // -------------------------------------------------------------
-const DB_DIR = path.resolve(__dirname, '..', 'database');
+const SEED_DB_PATH = path.resolve(__dirname, '..', 'database', 'gnbvg.db');
+const DB_DIR = process.env.DATABASE_DIR || (process.env.RENDER_DISK_PATH ? process.env.RENDER_DISK_PATH : path.resolve(__dirname, '..', 'database'));
 if (!fs.existsSync(DB_DIR)) {
   fs.mkdirSync(DB_DIR, { recursive: true });
 }
 const DB_PATH = path.join(DB_DIR, 'gnbvg.db');
+
+// If running with a persistent cloud disk for the first time, seed from baseline
+if (!fs.existsSync(DB_PATH) && fs.existsSync(SEED_DB_PATH) && path.resolve(DB_PATH) !== path.resolve(SEED_DB_PATH)) {
+  console.log('[DATABASE] First-time setup on persistent disk: copying baseline database...');
+  fs.copyFileSync(SEED_DB_PATH, DB_PATH);
+}
 
 let db;
 try {
