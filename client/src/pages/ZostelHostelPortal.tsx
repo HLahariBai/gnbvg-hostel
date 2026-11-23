@@ -1721,76 +1721,78 @@ export const ZostelHostelPortal: React.FC = () => {
         </div>
       </section>
 
-      {/* 4. INTERACTIVE HOSTEL BLOCK EXPLORER CARDS */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
-        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6">
-          <div>
-            <span className="text-xs font-extrabold uppercase tracking-wider text-coral">Hostel Wings & Geo-Fences</span>
-            <h2 className="font-display font-extrabold text-2xl sm:text-3xl text-slate-900 mt-1">
-              Explore GNBVG Residential Blocks
-            </h2>
+      {/* 4. INTERACTIVE HOSTEL BLOCK EXPLORER CARDS (Warden View Only - Hidden in Student Portal) */}
+      {activePortal === 'warden' && (
+        <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
+          <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6">
+            <div>
+              <span className="text-xs font-extrabold uppercase tracking-wider text-coral">Hostel Wings & Geo-Fences</span>
+              <h2 className="font-display font-extrabold text-2xl sm:text-3xl text-slate-900 mt-1">
+                Explore GNBVG Residential Blocks
+              </h2>
+            </div>
+            <p className="text-xs sm:text-sm text-slate-500">
+              Click any block card to inspect live occupancy, warden details & GPS perimeter
+            </p>
           </div>
-          <p className="text-xs sm:text-sm text-slate-500">
-            Click any block card to inspect live occupancy, warden details & GPS perimeter
-          </p>
-        </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {hostelBlocks.map((block) => {
-            const blockStudents = students.filter((s) => s.block === block.id);
-            const presentToday = blockStudents.filter((s) =>
-              attendanceRecords.some((a) => a.studentId === s.id && a.date === TODAY_STR)
-            ).length;
-            const pct = blockStudents.length ? Math.round((presentToday / blockStudents.length) * 100) : 0;
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {hostelBlocks.map((block) => {
+              const blockStudents = students.filter((s) => s.block === block.id);
+              const presentToday = blockStudents.filter((s) =>
+                attendanceRecords.some((a) => a.studentId === s.id && a.date === TODAY_STR)
+              ).length;
+              const pct = blockStudents.length ? Math.round((presentToday / blockStudents.length) * 100) : 0;
 
-            return (
-              <div
-                key={block.id}
-                onClick={() => setSelectedBlockModal(block)}
-                className="cursor-pointer group bg-white rounded-3xl p-6 shadow-md hover:shadow-xl border border-slate-100 hover:border-orange-200 transition-all duration-300 hover:-translate-y-1 flex flex-col justify-between"
-              >
-                <div>
-                  <div className="flex items-center justify-between gap-2 mb-4">
-                    <span className={`px-3 py-1 rounded-full text-xs font-extrabold ${block.badgeBg}`}>
-                      {block.name}
-                    </span>
-                    <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                      Geo-Fence Active
-                    </span>
-                  </div>
-                  <h3 className="font-display font-extrabold text-xl text-slate-900 group-hover:text-coral transition">
-                    {block.name} Wing
-                  </h3>
-                  <p className="text-xs text-slate-500 mt-1">{block.tagline}</p>
-                  <div className="mt-5">
-                    <div className="flex items-center justify-between text-xs font-bold mb-1.5">
-                      <span className="text-slate-600">Today's Check-In Rate</span>
-                      <span className="text-slate-900">
-                        {presentToday}/{blockStudents.length} Residents ({pct}%)
+              return (
+                <div
+                  key={block.id}
+                  onClick={() => setSelectedBlockModal(block)}
+                  className="cursor-pointer group bg-white rounded-3xl p-6 shadow-md hover:shadow-xl border border-slate-100 hover:border-orange-200 transition-all duration-300 hover:-translate-y-1 flex flex-col justify-between"
+                >
+                  <div>
+                    <div className="flex items-center justify-between gap-2 mb-4">
+                      <span className={`px-3 py-1 rounded-full text-xs font-extrabold ${block.badgeBg}`}>
+                        {block.name}
+                      </span>
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                        Geo-Fence Active
                       </span>
                     </div>
-                    <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full rounded-full bg-gradient-to-r ${block.accent} transition-all duration-500`}
-                        style={{ width: `${pct}%` }}
-                      />
+                    <h3 className="font-display font-extrabold text-xl text-slate-900 group-hover:text-coral transition">
+                      {block.name} Wing
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-1">{block.tagline}</p>
+                    <div className="mt-5">
+                      <div className="flex items-center justify-between text-xs font-bold mb-1.5">
+                        <span className="text-slate-600">Today's Check-In Rate</span>
+                        <span className="text-slate-900">
+                          {presentToday}/{blockStudents.length} Residents ({pct}%)
+                        </span>
+                      </div>
+                      <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full bg-gradient-to-r ${block.accent} transition-all duration-500`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
                     </div>
                   </div>
+                  <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between text-xs">
+                    <span className="text-slate-500 font-medium">
+                      Warden: <strong className="text-slate-700">{block.warden}</strong>
+                    </span>
+                    <span className="font-bold text-coral group-hover:translate-x-1 transition-transform inline-flex items-center gap-1">
+                      Inspect <ChevronRight className="w-4 h-4" />
+                    </span>
+                  </div>
                 </div>
-                <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between text-xs">
-                  <span className="text-slate-500 font-medium">
-                    Warden: <strong className="text-slate-700">{block.warden}</strong>
-                  </span>
-                  <span className="font-bold text-coral group-hover:translate-x-1 transition-transform inline-flex items-center gap-1">
-                    Inspect <ChevronRight className="w-4 h-4" />
-                  </span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </section>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       {/* 5. MAIN DYNAMIC WORKSPACE: STUDENT PORTAL vs WARDEN ADMIN */}
       <main className="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pb-16">
