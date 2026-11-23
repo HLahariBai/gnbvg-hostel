@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { sendOtpEmail } from './mailer.js';
+import { tursoExecuteAsync, pullFromTurso, TURSO_URL } from './turso.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -224,6 +225,9 @@ function initDatabase() {
 }
 
 initDatabase();
+
+// Sync from Turso Cloud on startup (ensures 5+ year data persistence across server restarts / redeploys)
+pullFromTurso(db).catch((e) => console.warn('[TURSO SYNC INIT]', e.message));
 
 // -------------------------------------------------------------
 // 3. Helper Functions (Password, Math, JWT)
@@ -618,6 +622,11 @@ app.post('/api/auth/reset-password', (req, res) => {
       WHERE email = ? OR roll_number = ?
     `).run(passwordHash, cleanEmail, record.roll_number);
 
+    tursoExecuteAsync(
+      'UPDATE users SET password_hash = ? WHERE email = ? OR roll_number = ?',
+      [passwordHash, cleanEmail, record.roll_number]
+    );
+
     db.prepare('DELETE FROM email_otps WHERE id = ?').run(record.id);
 
     console.log(`[PASSWORD RESET] Successfully updated password for ${cleanEmail} (${record.roll_number})`);
@@ -897,6 +906,12 @@ function handleEnrollFace(req, res) {
       WHERE id = ?
     `).run(descriptorJson, finalPhoto, newAttempts, student.id);
 
+    // Mirror to Turso Cloud for 5-Year Permanent Storage
+    tursoExecuteAsync(
+      'UPDATE users SET face_descriptor = ?, face_photo = ?, face_enrolled = 1, face_enroll_attempts = ? WHERE id = ? OR roll_number = ?',
+      [descriptorJson, finalPhoto, newAttempts, student.id, student.roll_number]
+    );
+
     console.log(`[FACE ENROLLED] Successfully saved 128-d face descriptor & photo for: ${student.roll_number} (${student.name}), attempt: ${newAttempts}/3`);
 
     res.json({
@@ -961,6 +976,12 @@ function handleResetFace(req, res) {
           face_enroll_attempts = 0
       WHERE id = ?
     `).run(student.id);
+
+    // Mirror face reset to Turso Cloud
+    tursoExecuteAsync(
+      'UPDATE users SET face_descriptor = NULL, face_photo = NULL, face_enrolled = 0, face_enroll_attempts = 0 WHERE id = ? OR roll_number = ?',
+      [student.id, student.roll_number]
+    );
 
     console.log(`[FACE RESET] Face biometrics & photo deleted by Warden/Admin for: ${student.roll_number} (${student.name}). Student can now re-enroll.`);
 
@@ -1094,6 +1115,12 @@ function handleMarkAttendance(req, res) {
         WHERE id = ?
       `).run(nowTime, latitude, longitude, faceDistance, gpsDistance, recordStatus, isGeofenceBreach ? 1 : 0, existing.id);
 
+      // Mirror attendance update to Turso Cloud
+      tursoExecuteAsync(
+        'UPDATE attendance SET timestamp = ?, latitude = ?, longitude = ?, face_distance = ?, gps_distance = ?, status = ?, is_geofence_breach = ? WHERE id = ?',
+        [nowTime, latitude, longitude, faceDistance, gpsDistance, recordStatus, isGeofenceBreach ? 1 : 0, existing.id]
+      );
+
       console.log(`[ATTENDANCE UPDATED] ${student.roll_number}: Record updated (Status: ${recordStatus}, GPS: ${Math.round(gpsDistance)}m).`);
     } else {
       // First check-in today
@@ -1118,6 +1145,12 @@ function handleMarkAttendance(req, res) {
         gpsDistance,
         recordStatus,
         isGeofenceBreach ? 1 : 0
+      );
+
+      // Mirror new attendance to Turso Cloud
+      tursoExecuteAsync(
+        'INSERT OR REPLACE INTO attendance (id, student_id, roll_number, name, year, block, room_number, date, timestamp, latitude, longitude, face_distance, gps_distance, status, is_geofence_breach) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [attId, student.id, student.roll_number, student.name, student.year, student.block, student.room_number, todayStr, nowTime, latitude, longitude, faceDistance, gpsDistance, recordStatus, isGeofenceBreach ? 1 : 0]
       );
     }
 
