@@ -192,6 +192,7 @@ export const ZostelHostelPortal: React.FC = () => {
   const [forgotOtp, setForgotOtp] = useState('');
   const [forgotNewPass, setForgotNewPass] = useState('');
   const [forgotConfirmPass, setForgotConfirmPass] = useState('');
+  const [forgotShowPassword, setForgotShowPassword] = useState(false);
   const [forgotOtpSent, setForgotOtpSent] = useState(false);
   const [forgotSending, setForgotSending] = useState(false);
   const [forgotTargetEmail, setForgotTargetEmail] = useState('');
@@ -690,6 +691,7 @@ export const ZostelHostelPortal: React.FC = () => {
         setForgotOtp('');
         setForgotNewPass('');
         setForgotConfirmPass('');
+        setForgotShowPassword(false);
         setForgotOtpSent(false);
       } else {
         showToast('Reset Failed', data.error || 'Invalid or expired OTP code.', 'error');
@@ -4483,6 +4485,7 @@ export const ZostelHostelPortal: React.FC = () => {
                 setForgotOtp('');
                 setForgotNewPass('');
                 setForgotConfirmPass('');
+                setForgotShowPassword(false);
               }}
               className="absolute top-4 right-4 p-2 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition"
             >
@@ -4558,31 +4561,63 @@ export const ZostelHostelPortal: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1.5">
-                    New Password (Min 6 chars) *
-                  </label>
-                  <input
-                    type="password"
-                    required
-                    value={forgotNewPass}
-                    onChange={(e) => setForgotNewPass(e.target.value)}
-                    placeholder="••••••••••••"
-                    className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50 text-sm font-medium outline-none focus:border-coral"
-                  />
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-bold text-slate-700 uppercase">
+                      New Password (Min 6 chars) *
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setForgotShowPassword(!forgotShowPassword)}
+                      className="text-[11px] text-coral font-bold flex items-center gap-1 hover:underline cursor-pointer"
+                    >
+                      {forgotShowPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5 text-slate-500" />}
+                      <span>{forgotShowPassword ? 'Hide' : 'Show Password'}</span>
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type={forgotShowPassword ? 'text' : 'password'}
+                      required
+                      value={forgotNewPass}
+                      onChange={(e) => setForgotNewPass(e.target.value)}
+                      placeholder="••••••••••••"
+                      className="w-full pl-4 pr-11 py-3 rounded-2xl border border-slate-200 bg-slate-50 text-sm font-medium outline-none focus:border-coral transition"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setForgotShowPassword(!forgotShowPassword)}
+                      className="absolute right-3.5 top-3.5 text-slate-400 hover:text-coral transition"
+                      title={forgotShowPassword ? 'Hide Password' : 'Show Password'}
+                    >
+                      {forgotShowPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1.5">
-                    Confirm New Password *
-                  </label>
-                  <input
-                    type="password"
-                    required
-                    value={forgotConfirmPass}
-                    onChange={(e) => setForgotConfirmPass(e.target.value)}
-                    placeholder="••••••••••••"
-                    className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50 text-sm font-medium outline-none focus:border-coral"
-                  />
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-bold text-slate-700 uppercase">
+                      Confirm New Password *
+                    </label>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type={forgotShowPassword ? 'text' : 'password'}
+                      required
+                      value={forgotConfirmPass}
+                      onChange={(e) => setForgotConfirmPass(e.target.value)}
+                      placeholder="••••••••••••"
+                      className="w-full pl-4 pr-11 py-3 rounded-2xl border border-slate-200 bg-slate-50 text-sm font-medium outline-none focus:border-coral transition"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setForgotShowPassword(!forgotShowPassword)}
+                      className="absolute right-3.5 top-3.5 text-slate-400 hover:text-coral transition"
+                      title={forgotShowPassword ? 'Hide Password' : 'Show Password'}
+                    >
+                      {forgotShowPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="flex gap-2 pt-2">
