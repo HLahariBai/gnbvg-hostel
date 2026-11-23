@@ -209,7 +209,7 @@ export const ZostelHostelPortal: React.FC = () => {
   const [wardenBlockFilter, setWardenBlockFilter] = useState('ALL');
   const [wardenDate, setWardenDate] = useState(TODAY_STR);
   const [wardenSearch, setWardenSearch] = useState('');
-  const [wardenActiveTab, setWardenActiveTab] = useState<'present' | 'absent' | 'outpass' | 'tickets' | 'geo' | 'alerts'>('present');
+  const [wardenActiveTab, setWardenActiveTab] = useState<'all' | 'present' | 'absent' | 'outpass' | 'tickets' | 'geo' | 'alerts'>('all');
   const [outOfRangeAlerts, setOutOfRangeAlerts] = useState<any[]>([]);
   const [isResolvingAlert, setIsResolvingAlert] = useState(false);
   const [showPurgeModal, setShowPurgeModal] = useState(false);
@@ -1482,6 +1482,25 @@ export const ZostelHostelPortal: React.FC = () => {
       absentList.push(s);
     }
   });
+
+  const handleExecuteWardenSearch = () => {
+    const q = wardenSearch.trim();
+    if (!q) {
+      showToast('Search', 'Please enter a student name, roll number, block, or room.', 'warning');
+      return;
+    }
+    const count = filteredStudents.length;
+    if (count === 0) {
+      showToast('No Matches', `No student found matching "${q}". Check spelling or roll number.`, 'error');
+    } else {
+      if (wardenActiveTab === 'present' && presentList.length === 0) {
+        setWardenActiveTab('all');
+        showToast('Switched to All Residents', `Found ${count} student(s) matching "${q}" (showing in All Residents).`);
+      } else {
+        showToast('Search Complete', `Found ${count} student(s) matching "${q}".`);
+      }
+    }
+  };
 
   const totalFiltered = filteredStudents.length;
   const presentPct = totalFiltered ? Math.round((presentList.length / totalFiltered) * 100) : 0;
@@ -3250,77 +3269,273 @@ export const ZostelHostelPortal: React.FC = () => {
 
                 {/* TABBED WORKSPACE */}
                 <div className="bg-white rounded-3xl shadow-xl shadow-slate-900/5 border border-slate-100 overflow-hidden">
-                  {/* Tabs Header */}
-                  <div className="bg-slate-50/80 px-6 py-4 border-b border-slate-200/80 flex flex-wrap gap-2">
-                    <button
-                      onClick={() => setWardenActiveTab('present')}
-                      className={`px-4 py-2 rounded-full text-xs font-extrabold flex items-center gap-1.5 transition ${
-                        wardenActiveTab === 'present'
-                          ? 'bg-tealhostel text-white shadow-sm'
-                          : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
-                      }`}
-                    >
-                      <UserCheck className="w-4 h-4" />
-                      <span>Present ({presentList.length})</span>
-                    </button>
-                    <button
-                      onClick={() => setWardenActiveTab('alerts')}
-                      className={`px-4 py-2 rounded-full text-xs font-extrabold flex items-center gap-1.5 transition ${
-                        wardenActiveTab === 'alerts'
-                          ? 'bg-rose-600 text-white shadow-sm'
-                          : outOfRangeAlerts.length > 0
-                          ? 'bg-rose-100 text-rose-800 border-2 border-rose-400 animate-pulse'
-                          : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
-                      }`}
-                    >
-                      <AlertTriangle className="w-4 h-4 text-rose-500" />
-                      <span>Out-of-Range Alerts ({outOfRangeAlerts.length})</span>
-                    </button>
-                    <button
-                      onClick={() => setWardenActiveTab('absent')}
-                      className={`px-4 py-2 rounded-full text-xs font-extrabold flex items-center gap-1.5 transition ${
-                        wardenActiveTab === 'absent'
-                          ? 'bg-tealhostel text-white shadow-sm'
-                          : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
-                      }`}
-                    >
-                      <UserX className="w-4 h-4 text-coral" />
-                      <span>Pending / Absent ({absentList.length})</span>
-                    </button>
-                    <button
-                      onClick={() => setWardenActiveTab('outpass')}
-                      className={`px-4 py-2 rounded-full text-xs font-extrabold flex items-center gap-1.5 transition ${
-                        wardenActiveTab === 'outpass'
-                          ? 'bg-tealhostel text-white shadow-sm'
-                          : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
-                      }`}
-                    >
-                      <PlaneTakeoff className="w-4 h-4 text-sky-600" />
-                      <span>Outpasses ({outpassRequests.length})</span>
-                    </button>
-                    <button
-                      onClick={() => setWardenActiveTab('tickets')}
-                      className={`px-4 py-2 rounded-full text-xs font-extrabold flex items-center gap-1.5 transition ${
-                        wardenActiveTab === 'tickets'
-                          ? 'bg-tealhostel text-white shadow-sm'
-                          : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
-                      }`}
-                    >
-                      <Wrench className="w-4 h-4 text-indigo-600" />
-                      <span>Maintenance ({maintenanceTickets.filter((t) => t.status === 'Open').length})</span>
-                    </button>
-                    <button
-                      onClick={() => setWardenActiveTab('geo')}
-                      className={`px-4 py-2 rounded-full text-xs font-extrabold flex items-center gap-1.5 transition ${
-                        wardenActiveTab === 'geo'
-                          ? 'bg-tealhostel text-white shadow-sm'
-                          : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
-                      }`}
-                    >
-                      <MapPin className="w-4 h-4 text-amber-500" />
-                      <span>FRS Timings & Geofencing</span>
-                    </button>
+                  {/* Tabs Header with Search in Tab Bar */}
+                  <div className="bg-slate-50/80 px-6 py-4 border-b border-slate-200/80 flex flex-col xl:flex-row xl:items-center justify-between gap-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={() => setWardenActiveTab('all')}
+                        className={`px-4 py-2 rounded-full text-xs font-extrabold flex items-center gap-1.5 transition ${
+                          wardenActiveTab === 'all'
+                            ? 'bg-tealhostel text-white shadow-sm'
+                            : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        <Users className="w-4 h-4" />
+                        <span>All Residents ({filteredStudents.length})</span>
+                      </button>
+                      <button
+                        onClick={() => setWardenActiveTab('present')}
+                        className={`px-4 py-2 rounded-full text-xs font-extrabold flex items-center gap-1.5 transition ${
+                          wardenActiveTab === 'present'
+                            ? 'bg-tealhostel text-white shadow-sm'
+                            : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        <UserCheck className="w-4 h-4" />
+                        <span>Present ({presentList.length})</span>
+                      </button>
+                      <button
+                        onClick={() => setWardenActiveTab('absent')}
+                        className={`px-4 py-2 rounded-full text-xs font-extrabold flex items-center gap-1.5 transition ${
+                          wardenActiveTab === 'absent'
+                            ? 'bg-tealhostel text-white shadow-sm'
+                            : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        <UserX className="w-4 h-4 text-coral" />
+                        <span>Pending / Absent ({absentList.length})</span>
+                      </button>
+                      <button
+                        onClick={() => setWardenActiveTab('alerts')}
+                        className={`px-4 py-2 rounded-full text-xs font-extrabold flex items-center gap-1.5 transition ${
+                          wardenActiveTab === 'alerts'
+                            ? 'bg-rose-600 text-white shadow-sm'
+                            : outOfRangeAlerts.length > 0
+                            ? 'bg-rose-100 text-rose-800 border-2 border-rose-400 animate-pulse'
+                            : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        <AlertTriangle className="w-4 h-4 text-rose-500" />
+                        <span>Out-of-Range Alerts ({outOfRangeAlerts.length})</span>
+                      </button>
+                      <button
+                        onClick={() => setWardenActiveTab('outpass')}
+                        className={`px-4 py-2 rounded-full text-xs font-extrabold flex items-center gap-1.5 transition ${
+                          wardenActiveTab === 'outpass'
+                            ? 'bg-tealhostel text-white shadow-sm'
+                            : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        <PlaneTakeoff className="w-4 h-4 text-sky-600" />
+                        <span>Outpasses ({outpassRequests.length})</span>
+                      </button>
+                      <button
+                        onClick={() => setWardenActiveTab('tickets')}
+                        className={`px-4 py-2 rounded-full text-xs font-extrabold flex items-center gap-1.5 transition ${
+                          wardenActiveTab === 'tickets'
+                            ? 'bg-tealhostel text-white shadow-sm'
+                            : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        <Wrench className="w-4 h-4 text-indigo-600" />
+                        <span>Maintenance ({maintenanceTickets.filter((t) => t.status === 'Open').length})</span>
+                      </button>
+                      <button
+                        onClick={() => setWardenActiveTab('geo')}
+                        className={`px-4 py-2 rounded-full text-xs font-extrabold flex items-center gap-1.5 transition ${
+                          wardenActiveTab === 'geo'
+                            ? 'bg-tealhostel text-white shadow-sm'
+                            : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        <MapPin className="w-4 h-4 text-amber-500" />
+                        <span>FRS Timings & Geofencing</span>
+                      </button>
+                    </div>
+
+                    {/* Integrated Search Bar with Search Button */}
+                    <div className="flex items-center gap-2 w-full xl:w-auto">
+                      <div className="relative flex-1 xl:w-72">
+                        <input
+                          type="text"
+                          value={wardenSearch}
+                          onChange={(e) => setWardenSearch(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleExecuteWardenSearch();
+                            }
+                          }}
+                          placeholder="Search in Present, Absent, All..."
+                          className="w-full pl-9 pr-8 py-2 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-800 placeholder-slate-400 outline-none focus:border-tealhostel focus:ring-2 focus:ring-tealhostel/20 transition shadow-xs"
+                        />
+                        <Search className="w-4 h-4 text-slate-400 absolute left-2.5 top-2.5" />
+                        {wardenSearch && (
+                          <button
+                            type="button"
+                            onClick={() => setWardenSearch('')}
+                            className="w-4 h-4 rounded-full bg-slate-200 hover:bg-slate-300 text-slate-600 absolute right-2.5 top-2.5 flex items-center justify-center text-xs transition"
+                            title="Clear Search"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleExecuteWardenSearch}
+                        className="px-4 py-2 rounded-xl bg-tealhostel hover:bg-teal-700 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-sm transition hover:-translate-y-0.5 shrink-0"
+                        title="Click to search across Present, Absent, and All"
+                      >
+                        <Search className="w-3.5 h-3.5" />
+                        <span>Search</span>
+                      </button>
+                    </div>
                   </div>
+
+                  {/* TAB 0: ALL RESIDENTS */}
+                  {wardenActiveTab === 'all' && (
+                    <div className="p-6 overflow-x-auto">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="border-b border-slate-200 text-[11px] font-extrabold uppercase tracking-wider text-slate-400">
+                            <th className="py-3.5 px-4">Student</th>
+                            <th className="py-3.5 px-4">Roll Number</th>
+                            <th className="py-3.5 px-4">Year</th>
+                            <th className="py-3.5 px-4">Block & Room</th>
+                            <th className="py-3.5 px-4">Attendance Status</th>
+                            <th className="py-3.5 px-4">FRS Biometrics</th>
+                            <th className="py-3.5 px-4 text-right">Smart ID</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 text-sm">
+                          {filteredStudents.length === 0 ? (
+                            <tr>
+                              <td colSpan={7} className="py-10 text-center text-slate-400 text-xs">
+                                No residents found matching your search or filters.
+                              </td>
+                            </tr>
+                          ) : (
+                            filteredStudents.map((student) => {
+                              const rec = attendanceRecords.find(
+                                (r) => (r.studentId === student.id || r.id === student.id) && r.date === wardenDate && (r.status === 'Present' || r.status === 'Present (Warden Override)')
+                              );
+                              const leave = outpassRequests.find(
+                                (o) => (o.studentId === student.id) && o.status === 'Approved' && o.fromDate <= wardenDate && o.toDate >= wardenDate
+                              );
+                              const isAlert = outOfRangeAlerts.some((a) => a.studentId === student.id || a.roll_number === student.id);
+
+                              return (
+                                <tr key={student.id} className="hover:bg-slate-50/60 transition">
+                                  <td className="py-3.5 px-4 font-bold text-slate-900 flex items-center gap-3">
+                                    {(student.face_photo || student.facePhoto) ? (
+                                      <img
+                                        src={student.face_photo || student.facePhoto || ''}
+                                        alt={student.name}
+                                        className="w-8 h-8 rounded-full object-cover border border-emerald-400 cursor-pointer hover:scale-105 transition shrink-0"
+                                        onClick={() => {
+                                          setSelectedStudentForIdCard(student);
+                                          setShowSmartIdModal(true);
+                                        }}
+                                        title="Click to view Smart ID Card"
+                                      />
+                                    ) : (
+                                      <span className="w-8 h-8 rounded-full bg-slate-100 text-slate-700 font-extrabold text-xs flex items-center justify-center shrink-0">
+                                        {student.name.slice(0, 2).toUpperCase()}
+                                      </span>
+                                    )}
+                                    <div
+                                      className="cursor-pointer hover:text-tealhostel transition flex items-center gap-1.5"
+                                      onClick={() => {
+                                        setSelectedStudentForIdCard(student);
+                                        setShowSmartIdModal(true);
+                                      }}
+                                      title="Click to view Smart ID Card"
+                                    >
+                                      <div>
+                                        <div className="font-bold text-slate-900">{student.name}</div>
+                                        <div className="text-[11px] text-slate-400 font-normal">{student.email}</div>
+                                      </div>
+                                      <IdCard className="w-3.5 h-3.5 text-slate-400 hover:text-tealhostel shrink-0" />
+                                    </div>
+                                  </td>
+                                  <td className="py-3.5 px-4 font-mono text-xs font-bold text-slate-700">{student.roll_number || student.id}</td>
+                                  <td className="py-3.5 px-4">
+                                    <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700">
+                                      {student.year}
+                                    </span>
+                                  </td>
+                                  <td className="py-3.5 px-4 text-xs font-semibold text-slate-700">
+                                    {student.block} • <span className="text-slate-500">{student.room}</span>
+                                  </td>
+                                  <td className="py-3.5 px-4">
+                                    {rec ? (
+                                      <span className="px-3 py-1 rounded-full text-xs font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1.5 w-fit">
+                                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                                        <span>Present ({rec.timestamp})</span>
+                                      </span>
+                                    ) : leave ? (
+                                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-sky-100 text-sky-800 border border-sky-300 flex items-center gap-1.5 w-fit">
+                                        <span>✈ Outpass Approved</span>
+                                      </span>
+                                    ) : isAlert ? (
+                                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-rose-100 text-rose-800 border border-rose-300 flex items-center gap-1.5 w-fit">
+                                        <AlertTriangle className="w-3 h-3 text-rose-600" />
+                                        <span>Out-of-Range Alert</span>
+                                      </span>
+                                    ) : (
+                                      <span className="px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200 flex items-center gap-1.5 w-fit">
+                                        <span className="w-2 h-2 rounded-full bg-slate-400"></span>
+                                        <span>Pending Check-In</span>
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="py-3.5 px-4">
+                                    {student.faceEnrolled ? (
+                                      <div className="flex items-center gap-2">
+                                        <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1 w-fit">
+                                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                                          <span>FRS Enrolled ✓</span>
+                                        </span>
+                                        <button
+                                          type="button"
+                                          disabled={isResettingFace}
+                                          onClick={() => handleResetFaceId(student.roll_number || student.id, student.name)}
+                                          className="px-2 py-0.5 rounded-lg bg-amber-50 hover:bg-rose-50 text-amber-800 hover:text-rose-700 border border-amber-200 hover:border-rose-300 text-[10px] font-bold transition flex items-center gap-1 shadow-xs"
+                                          title="Mistaken face? Delete Face ID & grant re-enrollment"
+                                        >
+                                          <RotateCcw className="w-2.5 h-2.5 text-rose-500" />
+                                          <span>Reset</span>
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                                        Enrollment Pending
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="py-3.5 px-4 text-right">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedStudentForIdCard(student);
+                                        setShowSmartIdModal(true);
+                                      }}
+                                      className="px-3 py-1 rounded-lg bg-slate-100 hover:bg-tealhostel hover:text-white text-slate-700 text-xs font-bold transition inline-flex items-center gap-1.5"
+                                      title="View Student Smart ID Card"
+                                    >
+                                      <IdCard className="w-3.5 h-3.5" />
+                                      <span>Smart ID</span>
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
 
                   {/* TAB 1: PRESENT STUDENTS */}
                   {wardenActiveTab === 'present' && (
