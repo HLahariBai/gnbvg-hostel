@@ -1429,7 +1429,7 @@ export const ZostelHostelPortal: React.FC = () => {
     }
   };
 
-  // Filtered Students for Warden View
+  // Filtered Students for Warden View (With Global Search override)
   const filteredStudents = students.filter((s) => {
     const sYearNorm = s.year ? s.year.trim().toLowerCase() : '';
     const filterNorm = wardenYearFilter.trim().toLowerCase();
@@ -1443,12 +1443,23 @@ export const ZostelHostelPortal: React.FC = () => {
       (filterNorm.includes('alumni') && sYearNorm.includes('alumni'));
 
     const matchBlock = wardenBlockFilter === 'ALL' || s.block === wardenBlockFilter;
+
+    const query = wardenSearch.trim().toLowerCase();
     const matchSearch =
-      !wardenSearch ||
-      s.name.toLowerCase().includes(wardenSearch.toLowerCase()) ||
-      s.id.toLowerCase().includes(wardenSearch.toLowerCase()) ||
-      s.room.toLowerCase().includes(wardenSearch.toLowerCase());
-    return matchYear && matchBlock && matchSearch;
+      !query ||
+      (s.name && s.name.toLowerCase().includes(query)) ||
+      (s.id && s.id.toLowerCase().includes(query)) ||
+      (s.roll_number && s.roll_number.toLowerCase().includes(query)) ||
+      (s.room && s.room.toLowerCase().includes(query)) ||
+      (s.block && s.block.toLowerCase().includes(query)) ||
+      (s.email && s.email.toLowerCase().includes(query));
+
+    // When a search query is actively typed, match globally across all blocks & years
+    if (query) {
+      return matchSearch;
+    }
+
+    return matchYear && matchBlock;
   });
 
   const presentList: { student: StudentUser; record: AttendanceItem }[] = [];
@@ -3152,15 +3163,52 @@ export const ZostelHostelPortal: React.FC = () => {
                         onChange={(e) => setWardenDate(e.target.value)}
                         className="px-4 py-2.5 rounded-2xl border border-slate-200 bg-slate-50 text-xs font-bold text-slate-800 outline-none focus:border-coral"
                       />
-                      <div className="relative flex-1 max-w-md">
-                        <input
-                          type="text"
-                          value={wardenSearch}
-                          onChange={(e) => setWardenSearch(e.target.value)}
-                          placeholder="Search by Name, Roll No, or Room..."
-                          className="w-full pl-10 pr-4 py-2.5 rounded-2xl border border-slate-200 bg-slate-50 text-xs font-medium text-slate-800 outline-none focus:border-coral"
-                        />
-                        <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                      <div className="relative flex-1 max-w-lg flex items-center gap-2">
+                        <div className="relative flex-1">
+                          <input
+                            type="text"
+                            value={wardenSearch}
+                            onChange={(e) => setWardenSearch(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                const q = wardenSearch.trim();
+                                if (q) {
+                                  showToast('Search Results', `Found ${filteredStudents.length} student(s) matching "${q}".`);
+                                }
+                              }
+                            }}
+                            placeholder="Search by Name, Roll No, or Room..."
+                            className="w-full pl-10 pr-9 py-2.5 rounded-2xl border border-slate-200 bg-slate-50 text-xs font-medium text-slate-800 outline-none focus:border-coral transition shadow-xs"
+                          />
+                          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                          {wardenSearch && (
+                            <button
+                              type="button"
+                              onClick={() => setWardenSearch('')}
+                              className="w-5 h-5 rounded-full bg-slate-200 hover:bg-slate-300 text-slate-600 absolute right-3 top-2.5 flex items-center justify-center text-xs transition"
+                              title="Clear Search"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const q = wardenSearch.trim();
+                            if (!q) {
+                              showToast('Search', 'Please enter a student name, roll number, or room.', 'warning');
+                            } else {
+                              showToast('Search Results', `Found ${filteredStudents.length} student(s) matching "${q}".`);
+                            }
+                          }}
+                          className="px-4 py-2.5 rounded-2xl bg-coral hover:bg-coral-dark text-white font-extrabold text-xs flex items-center gap-1.5 shadow-md shadow-coral/20 transition hover:-translate-y-0.5 shrink-0"
+                          title="Click to search across all students"
+                        >
+                          <Search className="w-3.5 h-3.5" />
+                          <span>Search</span>
+                        </button>
                       </div>
                     </div>
 
@@ -3172,6 +3220,32 @@ export const ZostelHostelPortal: React.FC = () => {
                       <span>Export Daily CSV</span>
                     </button>
                   </div>
+
+                  {/* Search Active Indicator Banner */}
+                  {wardenSearch.trim() && (
+                    <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-3">
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <Search className="w-4 h-4 text-coral" />
+                        <span className="font-bold text-slate-800">
+                          Search results for <span className="text-coral font-mono font-extrabold">"{wardenSearch.trim()}"</span>:
+                        </span>
+                        <span className="px-2.5 py-0.5 rounded-full bg-coral/10 text-coral font-extrabold text-xs">
+                          {filteredStudents.length} total student(s) found
+                        </span>
+                        <span className="text-slate-500 font-medium">
+                          ({presentList.length} Present • {absentList.length} Pending/Absent)
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setWardenSearch('')}
+                        className="px-3 py-1 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center gap-1 transition"
+                      >
+                        <X className="w-3 h-3" />
+                        <span>Clear Filter</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* TABBED WORKSPACE */}
