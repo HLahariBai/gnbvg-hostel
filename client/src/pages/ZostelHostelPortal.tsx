@@ -2303,31 +2303,19 @@ export const ZostelHostelPortal: React.FC = () => {
 
                         <div className="mt-6 pt-5 border-t border-emerald-100/80 flex flex-col sm:flex-row items-center justify-between gap-3">
                           <p className="text-xs text-slate-500 font-medium text-center sm:text-left">
-                            Verified Smart ID Card is active.
+                            Verified Smart ID Card is active and official.
                           </p>
-                          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSelectedStudentForIdCard(currentStudent);
-                                setShowSmartIdModal(true);
-                              }}
-                              className="flex-1 sm:flex-none px-4 py-2.5 rounded-2xl bg-gradient-to-r from-emerald-600 to-tealhostel hover:from-emerald-700 hover:to-teal-800 text-white font-extrabold text-xs shadow-md shadow-emerald-600/25 flex items-center justify-center gap-1.5 transition hover:-translate-y-0.5"
-                            >
-                              <IdCard className="w-4 h-4" />
-                              <span>View Smart ID Card</span>
-                            </button>
-                            <button
-                              type="button"
-                              disabled={isResettingFace}
-                              onClick={() => handleResetFaceId(currentStudent.roll_number || currentStudent.id, currentStudent.name)}
-                              className="flex-1 sm:flex-none px-4 py-2.5 rounded-2xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 hover:border-rose-300 font-extrabold text-xs flex items-center justify-center gap-1.5 transition shadow-xs disabled:opacity-50"
-                              title="Mistaken photo? Reset face biometrics and re-enroll with 3 fresh attempts"
-                            >
-                              <RotateCcw className="w-3.5 h-3.5 text-rose-500" />
-                              <span>Reset & Re-Enroll Face</span>
-                            </button>
-                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedStudentForIdCard(currentStudent);
+                              setShowSmartIdModal(true);
+                            }}
+                            className="w-full sm:w-auto px-5 py-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-tealhostel hover:from-emerald-700 hover:to-teal-800 text-white font-extrabold text-xs sm:text-sm shadow-md shadow-emerald-600/25 flex items-center justify-center gap-2 transition hover:-translate-y-0.5"
+                          >
+                            <IdCard className="w-4 h-4" />
+                            <span>View Smart ID Card</span>
+                          </button>
                         </div>
                       </div>
                     ) : (
@@ -4169,8 +4157,8 @@ export const ZostelHostelPortal: React.FC = () => {
                   </span>
                 </div>
 
-                {/* Warden / Admin Face Reset Control (For mistaken face enrollments) */}
-                {viewingStudent.faceEnrolled && (
+                {/* Warden / Admin Face Reset Control (ONLY visible to authenticated Wardens) */}
+                {viewingStudent.faceEnrolled && (activePortal === 'warden' || isWardenAuthenticated) && (
                   <div className="pt-3 border-t border-orange-200/60 mt-2 text-center">
                     <button
                       type="button"
@@ -4183,7 +4171,7 @@ export const ZostelHostelPortal: React.FC = () => {
                       <span>{isResettingFace ? 'Resetting Face...' : 'Delete Face ID & Allow Re-Enrollment'}</span>
                     </button>
                     <p className="text-[10px] text-slate-400 mt-1 font-medium">
-                      Admin / Warden override: clears biometric data if student mistakenly submitted someone else's face
+                      Official Warden override: clears biometric data if student mistakenly submitted someone else's face
                     </p>
                   </div>
                 )}
