@@ -301,6 +301,11 @@ function setSetting(key, value) {
       VALUES (?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
     `).run(key, String(value));
+
+    tursoExecuteAsync(
+      'INSERT INTO hostel_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+      [key, String(value)]
+    );
     return true;
   } catch (err) {
     console.error(`[SETTINGS] Failed to set ${key}:`, err.message);
@@ -1478,6 +1483,11 @@ app.post('/api/warden/attendance/resolve-alert', (req, res) => {
         WHERE id = ?
       `).run(nowIso, attendance_id);
 
+      tursoExecuteAsync(
+        "UPDATE attendance SET status = 'Present (Warden Override)', warden_action = 'Approved', warden_action_at = ? WHERE id = ?",
+        [nowIso, attendance_id]
+      );
+
       // Increment streak for approved student
       db.prepare('UPDATE users SET streak = streak + 1 WHERE id = ? OR roll_number = ?').run(att.student_id, att.roll_number);
 
@@ -1489,6 +1499,11 @@ app.post('/api/warden/attendance/resolve-alert', (req, res) => {
         SET status = 'Absent', warden_action = 'Marked Absent', warden_action_at = ?
         WHERE id = ?
       `).run(nowIso, attendance_id);
+
+      tursoExecuteAsync(
+        "UPDATE attendance SET status = 'Absent', warden_action = 'Marked Absent', warden_action_at = ? WHERE id = ?",
+        [nowIso, attendance_id]
+      );
 
       console.log(`[WARDEN ALERT RESOLVED] ${att.roll_number} marked Absent by Warden.`);
       return res.json({ success: true, message: `Marked ${att.name} (${att.roll_number}) as Absent.` });
@@ -1833,6 +1848,25 @@ app.post('/api/outpass/apply', (req, res) => {
       reason || 'Family function',
       parent_phone || '+91 98490 22110'
     );
+
+    tursoExecuteAsync(
+      'INSERT INTO outpasses (id, student_id, roll_number, student_name, year, block, room_number, type, from_date, to_date, reason, parent_phone, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        opId,
+        student_id || req.user?.id || 'unknown',
+        roll_number || req.user?.roll_number || 'UNKNOWN',
+        student_name || req.user?.name || 'Resident Student',
+        year || '2',
+        block || 'Anapurna-A',
+        room_number || 'A-101',
+        type || 'Weekend Outing',
+        from_date,
+        to_date,
+        reason || 'Family function',
+        parent_phone || '+91 98490 22110',
+        'Pending'
+      ]
+    );
     res.json({ success: true, message: 'Outpass request submitted to hostel warden.', outpassId: opId });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -1843,6 +1877,7 @@ app.post('/api/warden/outpass/:id/status', (req, res) => {
   try {
     const { status } = req.body;
     db.prepare('UPDATE outpasses SET status = ? WHERE id = ?').run(status, req.params.id);
+    tursoExecuteAsync('UPDATE outpasses SET status = ? WHERE id = ?', [status, req.params.id]);
     res.json({ success: true, message: `Outpass marked ${status}.` });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -1877,6 +1912,23 @@ app.post('/api/tickets/create', (req, res) => {
       description || 'Room issue',
       urgency || 'Normal'
     );
+
+    tursoExecuteAsync(
+      'INSERT INTO maintenance_tickets (id, student_id, roll_number, student_name, block, room_number, category, description, urgency, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        tkId,
+        student_id || req.user?.id || 'unknown',
+        roll_number || req.user?.roll_number || 'UNKNOWN',
+        student_name || req.user?.name || 'Resident Student',
+        block || 'Anapurna-A',
+        room_number || 'A-101',
+        category || 'Electricity / Power',
+        description || 'Room issue',
+        urgency || 'Normal',
+        'Open'
+      ]
+    );
+
     res.json({ success: true, message: 'Ticket logged successfully.', ticketId: tkId });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -1886,6 +1938,7 @@ app.post('/api/tickets/create', (req, res) => {
 app.post('/api/warden/ticket/:id/resolve', (req, res) => {
   try {
     db.prepare("UPDATE maintenance_tickets SET status = 'Resolved' WHERE id = ?").run(req.params.id);
+    tursoExecuteAsync("UPDATE maintenance_tickets SET status = 'Resolved' WHERE id = ?", [req.params.id]);
     res.json({ success: true, message: 'Maintenance ticket resolved.' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -1902,8 +1955,10 @@ app.post('/api/student/dinner-rsvp', (req, res) => {
 
     if (roll) {
       db.prepare('UPDATE users SET dinner_rsvp = ? WHERE roll_number = ?').run(val, roll);
+      tursoExecuteAsync('UPDATE users SET dinner_rsvp = ? WHERE roll_number = ?', [val, roll]);
     } else if (sId) {
       db.prepare('UPDATE users SET dinner_rsvp = ? WHERE id = ?').run(val, sId);
+      tursoExecuteAsync('UPDATE users SET dinner_rsvp = ? WHERE id = ?', [val, sId]);
     }
     res.json({ success: true, message: `Dinner RSVP updated: ${val ? 'Dining in mess' : 'Skipping dinner'}.`, dinner_rsvp: val === 1 });
   } catch (err) {
