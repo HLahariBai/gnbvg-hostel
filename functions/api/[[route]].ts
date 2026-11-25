@@ -283,7 +283,8 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       }
 
       // Step B: Server-side check: must have enrolled face
-      if (!student.face_descriptor || student.face_enrolled !== 1) {
+      const isEnrolled = Number(student.face_enrolled) === 1 || Boolean(student.face_photo) || Boolean(student.face_descriptor);
+      if (!student.face_descriptor || !isEnrolled) {
         return jsonResponse({ success: false, error: 'Mandatory face enrollment not found. Please enroll first.' }, 400);
       }
 

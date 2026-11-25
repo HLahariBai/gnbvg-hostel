@@ -109,6 +109,17 @@ interface TicketItem {
   status: 'Open' | 'Resolved';
 }
 
+export const isStudentFaceEnrolled = (s?: StudentUser | null): boolean => {
+  if (!s) return false;
+  return Boolean(
+    s.faceEnrolled ||
+    Number(s.face_enrolled) === 1 ||
+    Boolean(s.face_photo) ||
+    Boolean(s.facePhoto) ||
+    Boolean((s as any).face_descriptor)
+  );
+};
+
 const DEFAULT_BLOCKS: BlockInfo[] = [
   {
     id: 'Anapurna-A',
@@ -289,7 +300,17 @@ export const ZostelHostelPortal: React.FC = () => {
         const data = await res.json();
         if (data && data.success) {
           if (data.allStudents && data.allStudents.length > 0) {
-            setStudents(data.allStudents);
+            const normalizedStudents = data.allStudents.map((s: any) => {
+              const enrolled = isStudentFaceEnrolled(s);
+              return {
+                ...s,
+                faceEnrolled: enrolled,
+                face_enrolled: enrolled ? 1 : 0,
+                face_photo: s.face_photo || s.facePhoto || null,
+                facePhoto: s.face_photo || s.facePhoto || null,
+              };
+            });
+            setStudents(normalizedStudents);
           }
           if (data.presentStudents) {
             setAttendanceRecords(data.presentStudents.map((p: any) => ({
@@ -1049,7 +1070,7 @@ export const ZostelHostelPortal: React.FC = () => {
       return;
     }
 
-    if (!currentStudent || !currentStudent.faceEnrolled) {
+    if (!currentStudent || !isStudentFaceEnrolled(currentStudent)) {
       showToast('Enrollment Required', 'Please complete Step 1 Face Enrollment first.', 'warning');
       return;
     }
@@ -1592,7 +1613,7 @@ export const ZostelHostelPortal: React.FC = () => {
   const presentPct = totalFiltered ? Math.round((presentList.length / totalFiltered) * 100) : 0;
   const absentPct = totalFiltered ? Math.round((absentList.length / totalFiltered) * 100) : 0;
   const leavePct = totalFiltered ? Math.round((leaveList.length / totalFiltered) * 100) : 0;
-  const unenrolledCount = filteredStudents.filter((s) => !s.faceEnrolled).length;
+  const unenrolledCount = filteredStudents.filter((s) => !isStudentFaceEnrolled(s)).length;
   const unenrolledPct = totalFiltered ? Math.round((unenrolledCount / totalFiltered) * 100) : 0;
 
   return (
@@ -2278,12 +2299,12 @@ export const ZostelHostelPortal: React.FC = () => {
                         <h2 className="font-display font-extrabold text-xl sm:text-2xl">{currentStudent.name}</h2>
                         <span
                           className={`px-3 py-1 rounded-full text-xs font-bold border ${
-                            currentStudent.faceEnrolled
+                            isStudentFaceEnrolled(currentStudent)
                               ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/30'
                               : 'bg-amber-500/20 text-amber-300 border-amber-400/30'
                           }`}
                         >
-                          {currentStudent.faceEnrolled ? '✓ Face Enrolled & Verified' : 'Face Enrollment Pending'}
+                          {isStudentFaceEnrolled(currentStudent) ? '✓ Face Enrolled & Verified' : 'Face Enrollment Pending'}
                         </span>
                       </div>
                       <p className="text-slate-300 text-xs sm:text-sm font-medium">
@@ -2317,7 +2338,7 @@ export const ZostelHostelPortal: React.FC = () => {
                                 : 'text-amber-200'
                             }
                           >
-                            {todayAttendanceStatus?.status || (currentStudent.faceEnrolled ? 'Pending Check-In' : 'Enrollment Required')}
+                            {todayAttendanceStatus?.status || (isStudentFaceEnrolled(currentStudent) ? 'Pending Check-In' : 'Enrollment Required')}
                           </span>
                           {todayAttendanceStatus?.status?.includes('Present') && <span>✓</span>}
                         </div>
@@ -2358,7 +2379,7 @@ export const ZostelHostelPortal: React.FC = () => {
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                   {/* STEP 1: MANDATORY FACE ENROLLMENT MODULE OR CONFIRMATION STATUS CARD */}
                   <div className="lg:col-span-6 flex flex-col justify-between">
-                    {currentStudent.faceEnrolled ? (
+                    {isStudentFaceEnrolled(currentStudent) ? (
                       /* POST-ENROLLMENT ENROLLED STATUS CARD (FACE ENROLLMENT BUTTON HIDDEN) */
                       <div className="h-full bg-gradient-to-br from-white via-emerald-50/40 to-teal-50/50 rounded-3xl p-6 sm:p-8 shadow-lg border-2 border-emerald-200 flex flex-col justify-between">
                         <div>
@@ -2574,7 +2595,7 @@ export const ZostelHostelPortal: React.FC = () => {
                   {/* STEP 2: FRS ATTENDANCE SCANNER */}
                   <div className="lg:col-span-6 bg-white rounded-3xl p-6 sm:p-8 shadow-lg border border-teal-100 flex flex-col justify-between relative overflow-hidden">
                     {/* Locked Overlay if not enrolled */}
-                    {!currentStudent.faceEnrolled && (
+                    {!isStudentFaceEnrolled(currentStudent) && (
                       <div className="absolute inset-0 z-20 bg-slate-900/80 backdrop-blur-sm flex flex-col items-center justify-center p-8 text-center text-white">
                         <div className="w-16 h-16 rounded-3xl bg-white/10 border border-white/20 flex items-center justify-center mb-4">
                           <Lock className="w-8 h-8 text-amber-400" />
@@ -3594,7 +3615,7 @@ export const ZostelHostelPortal: React.FC = () => {
                                     )}
                                   </td>
                                   <td className="py-3.5 px-4">
-                                    {student.faceEnrolled ? (
+                                    {isStudentFaceEnrolled(student) ? (
                                       <div className="flex items-center gap-2">
                                         <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1 w-fit">
                                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -3881,7 +3902,7 @@ export const ZostelHostelPortal: React.FC = () => {
                                   {student.block} • <span className="text-slate-500">{student.room}</span>
                                 </td>
                                 <td className="py-3.5 px-4">
-                                  {student.faceEnrolled ? (
+                                  {isStudentFaceEnrolled(student) ? (
                                     <div className="flex items-center gap-2">
                                       <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1 w-fit">
                                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -4542,17 +4563,17 @@ export const ZostelHostelPortal: React.FC = () => {
                   </svg>
                   <span
                     className={`mt-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold ${
-                      viewingStudent.faceEnrolled
+                      isStudentFaceEnrolled(viewingStudent)
                         ? 'bg-emerald-100 text-emerald-700'
                         : 'bg-amber-100 text-amber-700'
                     }`}
                   >
-                    {viewingStudent.faceEnrolled ? '✓ FRS Biometric Active' : '⚠ Face Enrollment Pending'}
+                    {isStudentFaceEnrolled(viewingStudent) ? '✓ FRS Biometric Active' : '⚠ Face Enrollment Pending'}
                   </span>
                 </div>
 
                 {/* Warden / Admin Face Reset Control (ONLY visible to authenticated Wardens) */}
-                {viewingStudent.faceEnrolled && (activePortal === 'warden' || isWardenAuthenticated) && (
+                {isStudentFaceEnrolled(viewingStudent) && (activePortal === 'warden' || isWardenAuthenticated) && (
                   <div className="pt-3 border-t border-orange-200/60 mt-2 text-center">
                     <button
                       type="button"

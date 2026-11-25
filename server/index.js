@@ -1061,7 +1061,8 @@ function handleMarkAttendance(req, res) {
     }
 
     // Biometric face verification
-    if (!student.face_descriptor || student.face_enrolled !== 1) {
+    const isEnrolled = Number(student.face_enrolled) === 1 || Boolean(student.face_photo) || Boolean(student.face_descriptor);
+    if (!student.face_descriptor || !isEnrolled) {
       return res.status(400).json({
         success: false,
         error: 'Mandatory face enrollment not found. Please complete Step 1 Face Enrollment first.',
@@ -1368,8 +1369,9 @@ function handleWardenReport(req, res) {
       const att = attMap.get(s.id) || attMap.get(s.roll_number);
       const leave = leaveMap.get(s.id) || leaveMap.get(s.roll_number);
       const studentYear = formatYr(s.year);
+      const isEnrolled = Number(s.face_enrolled) === 1 || Boolean(s.face_photo) || Boolean(s.face_descriptor);
 
-      if (s.face_enrolled !== 1) {
+      if (!isEnrolled) {
         pendingFaceStudents.push({
           id: s.id,
           roll_number: s.roll_number,
@@ -1397,7 +1399,7 @@ function handleWardenReport(req, res) {
           faceDistance: att.face_distance,
           gpsDistance: Math.round(att.gps_distance || 0),
           face_photo: s.face_photo || null,
-          faceEnrolled: s.face_enrolled === 1,
+          faceEnrolled: isEnrolled,
         });
       }
       // Case 2: Out of Range Breach (High Priority Warden Alert)
@@ -1449,10 +1451,10 @@ function handleWardenReport(req, res) {
           block: s.block,
           room: s.room_number,
           parent_phone: s.father_phone || s.student_phone || '+91 98490 22110',
-          faceEnrolled: s.face_enrolled === 1,
+          faceEnrolled: isEnrolled,
           face_photo: s.face_photo || null,
           facePhoto: s.face_photo || null,
-          profileStatus: s.face_enrolled === 1 ? 'FRS Enrolled' : 'Enrollment Pending',
+          profileStatus: isEnrolled ? 'FRS Enrolled' : 'Enrollment Pending',
           dailyStatus: att && att.status === 'Absent' ? 'Absent' : 'Pending',
           status: att && att.status === 'Absent' ? 'Absent' : 'Pending',
         });
@@ -1469,7 +1471,7 @@ function handleWardenReport(req, res) {
         absentCount: absentStudents.length,
         outOfRangeCount: outOfRangeAlerts.length,
         leaveCount: leaveStudents.length,
-        enrolledFaceCount: allStudents.filter(s => s.face_enrolled === 1).length,
+        enrolledFaceCount: allStudents.filter(s => Number(s.face_enrolled) === 1 || Boolean(s.face_photo) || Boolean(s.face_descriptor)).length,
         pendingFaceCount: pendingFaceStudents.length,
       },
       presentStudents,
@@ -1499,23 +1501,26 @@ function handleWardenReport(req, res) {
         desc: t.description,
         status: t.status,
       })),
-      allStudents: allStudents.map(s => ({
-        id: s.roll_number || s.id,
-        roll_number: s.roll_number,
-        name: s.name,
-        email: s.email,
-        year: formatYr(s.year),
-        block: s.block || 'Anapurna-A',
-        room: s.room_number || 'A-101',
-        faceEnrolled: s.face_enrolled === 1,
-        face_enrolled: s.face_enrolled === 1 ? 1 : 0,
-        face_photo: s.face_photo || null,
-        facePhoto: s.face_photo || null,
-        face_enroll_attempts: s.face_enroll_attempts || 0,
-        profileStatus: s.face_enrolled === 1 ? 'FRS Enrolled' : 'Enrollment Pending',
-        streak: s.face_enrolled === 1 ? (s.streak || 0) : 0,
-        dinnerRsvp: s.dinner_rsvp === 1,
-      })),
+      allStudents: allStudents.map(s => {
+        const isEnrolled = Number(s.face_enrolled) === 1 || Boolean(s.face_photo) || Boolean(s.face_descriptor);
+        return {
+          id: s.roll_number || s.id,
+          roll_number: s.roll_number,
+          name: s.name,
+          email: s.email,
+          year: formatYr(s.year),
+          block: s.block || 'Anapurna-A',
+          room: s.room_number || 'A-101',
+          faceEnrolled: isEnrolled,
+          face_enrolled: isEnrolled ? 1 : 0,
+          face_photo: s.face_photo || null,
+          facePhoto: s.face_photo || null,
+          face_enroll_attempts: s.face_enroll_attempts || 0,
+          profileStatus: isEnrolled ? 'FRS Enrolled' : 'Enrollment Pending',
+          streak: isEnrolled ? (s.streak || 0) : 0,
+          dinnerRsvp: s.dinner_rsvp === 1,
+        };
+      }),
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
