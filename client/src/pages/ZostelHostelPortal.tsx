@@ -502,22 +502,41 @@ export const ZostelHostelPortal: React.FC = () => {
     fetchSettings();
   }, []);
 
-  // Load local face-api model weights on mount
-  useEffect(() => {
-    const loadFaceModels = async () => {
-      try {
-        if (typeof window !== 'undefined' && (window as any).faceapi) {
-          const faceapi = (window as any).faceapi;
-          await faceapi.nets.tinyFaceDetector.loadFromUri('/models');
-          await faceapi.nets.faceLandmark68Net.loadFromUri('/models');
-          await faceapi.nets.faceRecognitionNet.loadFromUri('/models');
-          console.log('[FACE-API] Local models loaded from /models');
-        }
-      } catch (err) {
-        console.warn('[FACE-API] Model preloading note:', err);
+  // Load AI model weights from Global Edge CDN (0 server bandwidth consumed) with local fallback
+  const loadFaceModelsSafe = async () => {
+    try {
+      if (typeof window === 'undefined' || !(window as any).faceapi) return;
+      const faceapi = (window as any).faceapi;
+      if (faceapi.nets.tinyFaceDetector.params && faceapi.nets.faceLandmark68Net.params && faceapi.nets.faceRecognitionNet.params) {
+        return; // Already initialized in memory
       }
-    };
-    loadFaceModels();
+      const CDN_MODELS = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@master/weights';
+      const LOCAL_MODELS = '/models';
+
+      try {
+        await Promise.all([
+          faceapi.nets.tinyFaceDetector.loadFromUri(CDN_MODELS),
+          faceapi.nets.faceLandmark68Net.loadFromUri(CDN_MODELS),
+          faceapi.nets.faceRecognitionNet.loadFromUri(CDN_MODELS),
+        ]);
+        console.log('[FACE-API] AI models loaded from Global Edge CDN (Zero server bandwidth consumed).');
+      } catch (cdnErr) {
+        console.warn('[FACE-API] CDN load failed, falling back to local /models:', cdnErr);
+        await Promise.all([
+          faceapi.nets.tinyFaceDetector.loadFromUri(LOCAL_MODELS),
+          faceapi.nets.faceLandmark68Net.loadFromUri(LOCAL_MODELS),
+          faceapi.nets.faceRecognitionNet.loadFromUri(LOCAL_MODELS),
+        ]);
+        console.log('[FACE-API] AI models loaded from local fallback.');
+      }
+    } catch (err) {
+      console.warn('[FACE-API] Model loading note:', err);
+    }
+  };
+
+  // Preload face-api model weights on mount via CDN
+  useEffect(() => {
+    loadFaceModelsSafe();
   }, []);
 
   // Real-time roll number roster check on registration
@@ -888,13 +907,7 @@ export const ZostelHostelPortal: React.FC = () => {
       // 3. Load face-api models if available
       if (typeof window !== 'undefined' && (window as any).faceapi) {
         const faceapi = (window as any).faceapi;
-        try {
-          if (!faceapi.nets.tinyFaceDetector.params) await faceapi.nets.tinyFaceDetector.loadFromUri('/models');
-          if (!faceapi.nets.faceLandmark68Net.params) await faceapi.nets.faceLandmark68Net.loadFromUri('/models');
-          if (!faceapi.nets.faceRecognitionNet.params) await faceapi.nets.faceRecognitionNet.loadFromUri('/models');
-        } catch (mErr) {
-          console.warn('[FACE-API] Model loading note:', mErr);
-        }
+        await loadFaceModelsSafe();
 
         if (activeVideo) {
           const detection = await faceapi
@@ -1059,13 +1072,7 @@ export const ZostelHostelPortal: React.FC = () => {
 
       if (typeof window !== 'undefined' && (window as any).faceapi && activeVideo) {
         const faceapi = (window as any).faceapi;
-        try {
-          if (!faceapi.nets.tinyFaceDetector.params) await faceapi.nets.tinyFaceDetector.loadFromUri('/models');
-          if (!faceapi.nets.faceLandmark68Net.params) await faceapi.nets.faceLandmark68Net.loadFromUri('/models');
-          if (!faceapi.nets.faceRecognitionNet.params) await faceapi.nets.faceRecognitionNet.loadFromUri('/models');
-        } catch (mErr) {
-          console.warn('[FACE-API] Model loading note:', mErr);
-        }
+        await loadFaceModelsSafe();
 
         const detection = await faceapi
           .detectSingleFace(activeVideo, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.30 }))

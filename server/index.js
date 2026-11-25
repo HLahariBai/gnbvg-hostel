@@ -386,12 +386,12 @@ const CLIENT_DIST = path.resolve(__dirname, '..', 'client', 'dist');
 const CLIENT_PUBLIC = path.resolve(__dirname, '..', 'client', 'public');
 
 if (fs.existsSync(CLIENT_DIST)) {
-  app.use(express.static(CLIENT_DIST));
+  app.use(express.static(CLIENT_DIST, { maxAge: '7d', immutable: true }));
 }
 if (fs.existsSync(CLIENT_PUBLIC)) {
-  app.use(express.static(CLIENT_PUBLIC));
-  app.use('/models', express.static(path.join(CLIENT_PUBLIC, 'models')));
-  app.use('/images', express.static(path.join(CLIENT_PUBLIC, 'images')));
+  app.use(express.static(CLIENT_PUBLIC, { maxAge: '7d' }));
+  app.use('/models', express.static(path.join(CLIENT_PUBLIC, 'models'), { maxAge: '30d', immutable: true }));
+  app.use('/images', express.static(path.join(CLIENT_PUBLIC, 'images'), { maxAge: '30d', immutable: true }));
 }
 
 // -------------------------------------------------------------
