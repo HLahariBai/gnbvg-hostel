@@ -2,6 +2,7 @@
   "name": "gnbvg-hostel-system",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "description": "GNBVG Hostel Safety, Attendance and Student Movement Management System",
   "workspaces": [
     "server",
