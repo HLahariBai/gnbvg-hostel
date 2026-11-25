@@ -21,7 +21,9 @@
     "prisma:migrate": "npm run prisma:migrate --workspace=server",
     "lint": "npm run lint --workspace=server && npm run lint --workspace=client",
     "test": "npm run test --workspace=server",
-    "import-students": "npm run import-students --workspace=server"
+    "import-students": "npm run import-students --workspace=server",
+    "backup:pull": "node scripts/sync_cloud_to_local.js",
+    "backup:restore": "node scripts/restore_to_new_cloud.js"
   },
   "keywords": [
     "gprec",
