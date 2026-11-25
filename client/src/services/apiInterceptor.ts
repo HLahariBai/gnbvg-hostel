@@ -57,6 +57,7 @@ export function initApiInterceptor() {
           return jsonResponse({ success: false, error: 'Student record not found in approved hostel roster.' }, 404);
         }
         const student = rows[0];
+        const isEnrolled = Number(student.face_enrolled) === 1 || Boolean(student.face_photo) || Boolean(student.face_descriptor);
         return jsonResponse({
           success: true,
           user: {
@@ -68,8 +69,8 @@ export function initApiInterceptor() {
             block: student.block,
             room: student.room_number,
             room_number: student.room_number,
-            face_enrolled: student.face_enrolled === 1 ? 1 : 0,
-            faceEnrolled: student.face_enrolled === 1,
+            face_enrolled: isEnrolled ? 1 : 0,
+            faceEnrolled: isEnrolled,
             face_photo: student.face_photo || null,
             facePhoto: student.face_photo || null,
             streak: Number(student.streak || 1),
@@ -176,7 +177,15 @@ export function initApiInterceptor() {
       // 7. GET /api/warden/dashboard
       if (pathname === '/api/warden/dashboard') {
         const queryDate = parsedUrl.searchParams.get('date') || new Date().toISOString().split('T')[0];
-        const allStudents = await executeTursoQuery("SELECT * FROM users WHERE role = 'student'");
+        const allStudentsRaw = await executeTursoQuery("SELECT * FROM users WHERE role = 'student'");
+        const allStudents = allStudentsRaw.map((s) => {
+          const isEnrolled = Number(s.face_enrolled) === 1 || Boolean(s.face_photo) || Boolean(s.face_descriptor);
+          return {
+            ...s,
+            face_enrolled: isEnrolled ? 1 : 0,
+            faceEnrolled: isEnrolled,
+          };
+        });
         const attendanceRows = await executeTursoQuery('SELECT * FROM attendance WHERE date = ?', [queryDate]);
         const approvedLeaves = await executeTursoQuery(
           "SELECT * FROM outpasses WHERE status = 'Approved' AND from_date <= ? AND to_date >= ?",

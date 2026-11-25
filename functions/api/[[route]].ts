@@ -190,6 +190,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         return jsonResponse({ success: false, error: 'Student record not found in approved hostel roster.' }, 404);
       }
       const student = rows[0];
+      const isEnrolled = Number(student.face_enrolled) === 1 || Boolean(student.face_photo) || Boolean(student.face_descriptor);
       return jsonResponse({
         success: true,
         user: {
@@ -201,8 +202,8 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           block: student.block,
           room: student.room_number,
           room_number: student.room_number,
-          face_enrolled: student.face_enrolled === 1 ? 1 : 0,
-          faceEnrolled: student.face_enrolled === 1,
+          face_enrolled: isEnrolled ? 1 : 0,
+          faceEnrolled: isEnrolled,
           face_photo: student.face_photo || null,
           facePhoto: student.face_photo || null,
           streak: Number(student.streak || 1),
@@ -379,7 +380,15 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     // 7. GET /api/warden/dashboard (Central Administrative Register)
     if (pathname === '/api/warden/dashboard') {
       const queryDate = url.searchParams.get('date') || todayStr;
-      const allStudents = await tursoQuery(env, "SELECT * FROM users WHERE role = 'student'");
+      const allStudentsRaw = await tursoQuery(env, "SELECT * FROM users WHERE role = 'student'");
+      const allStudents = allStudentsRaw.map((s: any) => {
+        const isEnrolled = Number(s.face_enrolled) === 1 || Boolean(s.face_photo) || Boolean(s.face_descriptor);
+        return {
+          ...s,
+          face_enrolled: isEnrolled ? 1 : 0,
+          faceEnrolled: isEnrolled,
+        };
+      });
       const attendanceRows = await tursoQuery(env, 'SELECT * FROM attendance WHERE date = ?', [queryDate]);
       const approvedLeaves = await tursoQuery(
         env,

@@ -679,8 +679,20 @@ export const ZostelHostelPortal: React.FC = () => {
           year: data.user.year ? `${data.user.year}${data.user.year === '1' ? 'st' : data.user.year === '2' ? 'nd' : data.user.year === '3' ? 'rd' : 'th'} Year` : '2nd Year',
           block: data.user.block || 'Anapurna-A',
           room: data.user.room_number || data.user.room || 'A-101',
-          faceEnrolled: Boolean(data.user.face_enrolled || data.user.faceEnrolled),
-          face_enrolled: data.user.face_enrolled === 1 || data.user.faceEnrolled ? 1 : 0,
+          faceEnrolled: Boolean(
+            data.user.face_enrolled == 1 ||
+            data.user.faceEnrolled ||
+            data.user.face_photo ||
+            data.user.facePhoto ||
+            data.user.face_descriptor
+          ),
+          face_enrolled: (
+            data.user.face_enrolled == 1 ||
+            data.user.faceEnrolled ||
+            data.user.face_photo ||
+            data.user.facePhoto ||
+            data.user.face_descriptor
+          ) ? 1 : 0,
           face_photo: data.user.face_photo || data.user.facePhoto || null,
           facePhoto: data.user.face_photo || data.user.facePhoto || null,
           face_enroll_attempts: data.user.face_enroll_attempts || 0,
