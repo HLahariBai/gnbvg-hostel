@@ -1462,6 +1462,12 @@ export const ZostelHostelPortal: React.FC = () => {
     showToast('Attendance Register Generated 📊', `Downloading ${days}-day attendance register matrix (P / A / L grid).`);
   };
 
+  // Download 5-Year Permanent Biometric & Database JSON Archive
+  const downloadBiometricsBackup = () => {
+    window.open('/api/warden/backup/download', '_blank');
+    showToast('Biometrics & Data Backup 💾', 'Downloading 5-year permanent biometrics and student roster snapshot.');
+  };
+
   // Purge Past Attendance Records (Weekly reset)
   const handlePurgeHistory = async () => {
     try {
@@ -3182,6 +3188,15 @@ export const ZostelHostelPortal: React.FC = () => {
                     >
                       <Download className="w-4 h-4 text-indigo-600" />
                       <span>7-Day Matrix (P / A / L)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={downloadBiometricsBackup}
+                      className="px-4 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black flex items-center justify-center gap-2 shadow-sm transition"
+                      title="Download complete 5-year biometric face descriptors and full student roster backup"
+                    >
+                      <Save className="w-4 h-4 text-white" />
+                      <span>Backup Biometrics & Data</span>
                     </button>
                     <button
                       type="button"

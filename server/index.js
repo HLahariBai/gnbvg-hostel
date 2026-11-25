@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { sendOtpEmail } from './mailer.js';
 import { tursoExecuteAsync, pullFromTurso, TURSO_URL } from './turso.js';
+import { createBiometricsBackup } from './backup.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -227,7 +228,14 @@ function initDatabase() {
 initDatabase();
 
 // Sync from Turso Cloud on startup (ensures 5+ year data persistence across server restarts / redeploys)
-pullFromTurso(db).catch((e) => console.warn('[TURSO SYNC INIT]', e.message));
+pullFromTurso(db)
+  .then(() => {
+    createBiometricsBackup(db);
+  })
+  .catch((e) => {
+    console.warn('[TURSO SYNC INIT]', e.message);
+    createBiometricsBackup(db);
+  });
 
 // -------------------------------------------------------------
 // 3. Helper Functions (Password, Math, JWT)
@@ -919,6 +927,9 @@ function handleEnrollFace(req, res) {
 
     console.log(`[FACE ENROLLED] Successfully saved 128-d face descriptor & photo for: ${student.roll_number} (${student.name}), attempt: ${newAttempts}/3`);
 
+    // Create immediate persistent backup of updated biometrics
+    createBiometricsBackup(db);
+
     res.json({
       success: true,
       message: `Biometric face profile and Smart ID photo saved for ${student.name} (${student.roll_number}). Smart ID Card and FRS are successfully enrolled!`,
@@ -1106,7 +1117,7 @@ function handleMarkAttendance(req, res) {
       console.log(`[GEOFENCE VERIFIED] ${student.roll_number} (${student.name}) is within ${Math.round(gpsDistance)}m of ${blockName} (Allowed: ${allowedRadius}m). Status: Present.`);
     }
 
-    // Duplicate detection: If student marks attendance more than once today, update record
+    // Duplicate detection: If student marks attendance 2-3 times today, detect duplicate and keep only 1 record
     const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const existing = db.prepare(`
       SELECT * FROM attendance
@@ -1114,6 +1125,25 @@ function handleMarkAttendance(req, res) {
     `).get(student.id, student.roll_number, todayStr);
 
     if (existing) {
+      // 1. Strict duplicate detection: if student is already marked Present,
+      // prevent accidental duplicates or status downgrade. Retain their single daily Present record.
+      if (existing.status === 'Present' && !existing.is_geofence_breach) {
+        console.log(`[DUPLICATE CHECK-IN DETECTED] ${student.roll_number} already marked Present at ${existing.timestamp}. Single record retained.`);
+        return res.json({
+          success: true,
+          alreadyMarked: true,
+          isDuplicate: true,
+          status: 'Present',
+          message: `Attendance already verified for today at ${existing.timestamp}. Duplicate check-in absorbed (Strict 1 record per student per day).`,
+          date: todayStr,
+          timestamp: existing.timestamp,
+          faceDistance: Number(faceDistance.toFixed(3)),
+          gpsDistance: Math.round(gpsDistance),
+        });
+      }
+
+      // 2. If student was previously flagged outside and now has re-scanned inside the courtyard,
+      // update the single existing record to Present!
       db.prepare(`
         UPDATE attendance
         SET timestamp = ?, latitude = ?, longitude = ?, face_distance = ?, gps_distance = ?, status = ?, is_geofence_breach = ?
@@ -1126,7 +1156,21 @@ function handleMarkAttendance(req, res) {
         [nowTime, latitude, longitude, faceDistance, gpsDistance, recordStatus, isGeofenceBreach ? 1 : 0, existing.id]
       );
 
-      console.log(`[ATTENDANCE UPDATED] ${student.roll_number}: Record updated (Status: ${recordStatus}, GPS: ${Math.round(gpsDistance)}m).`);
+      console.log(`[ATTENDANCE UPDATED] ${student.roll_number}: Single record updated (Status: ${recordStatus}, GPS: ${Math.round(gpsDistance)}m).`);
+
+      return res.json({
+        success: true,
+        alreadyMarked: true,
+        isUpdate: true,
+        status: recordStatus,
+        message: recordStatus === 'Present'
+          ? `Updated: Attendance now verified as Present (in range). Single daily record preserved.`
+          : `Duplicate check-in recorded at ${nowTime}. Only 1 record is kept for today.`,
+        date: todayStr,
+        timestamp: nowTime,
+        faceDistance: Number(faceDistance.toFixed(3)),
+        gpsDistance: Math.round(gpsDistance),
+      });
     } else {
       // First check-in today
       const attId = `att-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
@@ -1673,6 +1717,31 @@ app.post('/api/warden/attendance/purge-history', (req, res) => {
       remainingCount: 0,
       message: `Successfully purged ${del.changes} past attendance records. All 916 student accounts and face enrollments are 100% preserved. Database is clean for the new week!`
     });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/warden/backup/download (Download latest 5-year full biometrics & roster backup JSON)
+app.get('/api/warden/backup/download', (req, res) => {
+  try {
+    const backupRes = createBiometricsBackup(db);
+    if (!backupRes.success) {
+      return res.status(500).json({ success: false, error: backupRes.error });
+    }
+    res.setHeader('Content-Disposition', `attachment; filename="GNBVG_Biometrics_Archive_${backupRes.timestamp}.json"`);
+    res.setHeader('Content-Type', 'application/json');
+    res.sendFile(backupRes.latestFile);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/warden/backup/trigger (Trigger manual backup snapshot)
+app.post('/api/warden/backup/trigger', (req, res) => {
+  try {
+    const result = createBiometricsBackup(db);
+    res.json(result);
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
