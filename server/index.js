@@ -321,6 +321,19 @@ function setSetting(key, value) {
   }
 }
 
+function getNowIST() {
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const timeStr = now.toLocaleTimeString('en-US', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  });
+  return { dateStr, timeStr, now };
+}
+
 function isFrsWindowOpen() {
   const override = getSetting('frs_window_override', 'auto');
   if (override === 'open') {
@@ -1018,7 +1031,7 @@ app.post('/api/students/reset-face', handleResetFace);
 // POST /api/attendance/mark & /api/student/mark-attendance
 function handleMarkAttendance(req, res) {
   try {
-    const { roll_number, student_id, face_descriptor, latitude, longitude } = req.body;
+    const { roll_number, student_id, face_descriptor, latitude, longitude, client_timestamp } = req.body;
     const roll = (roll_number || req.user?.roll_number || '').trim().toUpperCase();
     const sId = student_id || req.user?.id || null;
 
@@ -1032,7 +1045,11 @@ function handleMarkAttendance(req, res) {
       return res.status(404).json({ success: false, error: 'Student record not found in hostel roster.' });
     }
 
-    const todayStr = new Date().toISOString().split('T')[0];
+    const freshIST = getNowIST();
+    const todayStr = freshIST.dateStr;
+    const nowTime = (typeof client_timestamp === 'string' && client_timestamp.trim())
+      ? client_timestamp.trim()
+      : freshIST.timeStr;
 
     // Check FRS timing window
     const windowStatus = isFrsWindowOpen();
@@ -1119,7 +1136,6 @@ function handleMarkAttendance(req, res) {
     }
 
     // Duplicate detection: If student marks attendance 2-3 times today, detect duplicate and keep only 1 record
-    const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const existing = db.prepare(`
       SELECT * FROM attendance
       WHERE (student_id = ? OR roll_number = ?) AND date = ?
@@ -1250,7 +1266,7 @@ app.get('/api/student/my-attendance', (req, res) => {
       return res.status(404).json({ success: false, error: 'Student not found.' });
     }
 
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getNowIST().dateStr;
 
     const records = db.prepare(`
       SELECT id, date, timestamp, block, room_number, status, is_geofence_breach, face_distance
@@ -1299,7 +1315,7 @@ app.get('/api/student/my-attendance', (req, res) => {
 // GET /api/warden/dashboard & /api/warden/attendance-report
 function handleWardenReport(req, res) {
   try {
-    const queryDate = req.query.date || new Date().toISOString().split('T')[0];
+    const queryDate = req.query.date || getNowIST().dateStr;
     const queryYear = req.query.year || 'ALL';
     const queryBlock = req.query.block || 'ALL';
 

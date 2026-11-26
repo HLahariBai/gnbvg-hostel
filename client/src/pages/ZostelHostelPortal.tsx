@@ -162,7 +162,7 @@ const DEFAULT_BLOCKS: BlockInfo[] = [
   },
 ];
 
-const TODAY_STR = new Date().toISOString().split('T')[0];
+const TODAY_STR = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 
 export const ZostelHostelPortal: React.FC = () => {
   // Main Navigation Portal: 'student' or 'warden'
@@ -317,7 +317,7 @@ export const ZostelHostelPortal: React.FC = () => {
               id: p.id,
               studentId: p.roll_number || p.studentId,
               date: wardenDate,
-              timestamp: p.timestamp || '07:30 PM',
+              timestamp: p.timestamp || '--',
               block: p.block,
               method: p.method || 'FRS Biometrics + GPS',
               status: 'Present',
@@ -1140,6 +1140,14 @@ export const ZostelHostelPortal: React.FC = () => {
 
     // 3. Post to backend (Tallying live face against enrolled face in SQLite)
     try {
+      const captureTimeIST = new Date().toLocaleTimeString('en-US', {
+        timeZone: 'Asia/Kolkata',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true,
+      });
+
       const res = await fetch('/api/attendance/mark', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1149,13 +1157,14 @@ export const ZostelHostelPortal: React.FC = () => {
           face_descriptor: liveDescriptor,
           latitude,
           longitude,
+          client_timestamp: captureTimeIST,
         }),
       });
       const data = await res.json();
 
       if (res.ok && data.success) {
         setFrsStep(4);
-        const nowTime = data.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const nowTime = data.timestamp || captureTimeIST;
         const newRec: AttendanceItem = {
           id: `att_${currentStudent.id}_${Date.now()}`,
           studentId: currentStudent.id,
@@ -2940,7 +2949,7 @@ export const ZostelHostelPortal: React.FC = () => {
                           (myAttendanceLogs.length > 0 ? myAttendanceLogs : attendanceRecords.filter((r) => r.studentId === currentStudent.id)).map((rec: any) => (
                             <tr key={rec.id || `${rec.date}-${rec.timestamp}`} className="hover:bg-orange-50/40 transition">
                               <td className="py-3.5 px-4 font-bold text-slate-800">{rec.date}</td>
-                              <td className="py-3.5 px-4 font-mono text-xs text-slate-600">{rec.timestamp || '07:30 PM'}</td>
+                              <td className="py-3.5 px-4 font-mono text-xs text-slate-600">{rec.timestamp || '--'}</td>
                               <td className="py-3.5 px-4">
                                 <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-700">
                                   {rec.block || currentStudent.block}

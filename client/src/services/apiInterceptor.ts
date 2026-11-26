@@ -131,10 +131,20 @@ export function initApiInterceptor() {
 
       // 6. POST /api/attendance/mark
       if ((pathname === '/api/attendance/mark' || pathname === '/api/student/mark-attendance') && method === 'POST') {
-        const { roll_number, latitude, longitude } = body;
+        const { roll_number, latitude, longitude, client_timestamp } = body;
         const targetRoll = (roll_number || '').trim().toUpperCase();
-        const todayStr = new Date().toISOString().split('T')[0];
-        const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const now = new Date();
+        const todayStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+        const freshISTTime = now.toLocaleTimeString('en-US', {
+          timeZone: 'Asia/Kolkata',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true,
+        });
+        const nowTime = (typeof client_timestamp === 'string' && client_timestamp.trim())
+          ? client_timestamp.trim()
+          : freshISTTime;
 
         const userRows = await executeTursoQuery('SELECT * FROM users WHERE UPPER(roll_number) = ?', [targetRoll]);
         const student = userRows[0];

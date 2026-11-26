@@ -69,7 +69,13 @@ async function tursoQuery(env: Env, sql: string, args: any[] = []): Promise<any[
 function getNowIST(): { dateStr: string; timeStr: string; hours: number; minutes: number } {
   const now = new Date();
   const istDateStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }); // YYYY-MM-DD
-  const istTimeStr = now.toLocaleTimeString('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true });
+  const istTimeStr = now.toLocaleTimeString('en-US', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  });
 
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Asia/Kolkata',
@@ -272,8 +278,15 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
     // 6. POST /api/attendance/mark (Strict Server-Side FRS Attendance Verification)
     if ((pathname === '/api/attendance/mark' || pathname === '/api/student/mark-attendance') && method === 'POST') {
-      const { roll_number, latitude, longitude, face_descriptor } = body;
+      const { roll_number, latitude, longitude, face_descriptor, client_timestamp } = body;
       const targetRoll = (roll_number || '').trim().toUpperCase();
+
+      // Fresh IST capture time at the exact second the face is received (or client camera timestamp)
+      const freshIST = getNowIST();
+      const recordDate = freshIST.dateStr;
+      const recordTime = (typeof client_timestamp === 'string' && client_timestamp.trim())
+        ? client_timestamp.trim()
+        : freshIST.timeStr;
 
       // Step A: Fetch student profile from Turso Cloud
       const userRows = await tursoQuery(env, 'SELECT * FROM users WHERE UPPER(roll_number) = ?', [targetRoll]);
@@ -318,7 +331,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       const existingRows = await tursoQuery(
         env,
         'SELECT * FROM attendance WHERE UPPER(roll_number) = ? AND date = ?',
-        [targetRoll, todayStr]
+        [targetRoll, recordDate]
       );
 
       if (existingRows.length > 0) {
@@ -330,7 +343,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
             isDuplicate: true,
             status: 'Present',
             message: `Attendance already verified for today at ${existing.timestamp}. Duplicate check-in absorbed (Strict 1 record per student per day).`,
-            date: todayStr,
+            date: recordDate,
             timestamp: existing.timestamp,
             faceDistance: Number(faceDistance.toFixed(3)),
             gpsDistance: Math.round(gpsDistance),
@@ -341,7 +354,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         await tursoQuery(
           env,
           'UPDATE attendance SET timestamp = ?, latitude = ?, longitude = ?, face_distance = ?, gps_distance = ?, status = ?, is_geofence_breach = ? WHERE id = ?',
-          [nowTime, latitude, longitude, faceDistance, gpsDistance, recordStatus, isGeofenceBreach ? 1 : 0, existing.id]
+          [recordTime, latitude, longitude, faceDistance, gpsDistance, recordStatus, isGeofenceBreach ? 1 : 0, existing.id]
         );
 
         return jsonResponse({
@@ -351,9 +364,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           status: recordStatus,
           message: recordStatus === 'Present'
             ? 'Updated: Attendance now verified as Present (in range). Single daily record preserved.'
-            : `Duplicate check-in recorded at ${nowTime}. Only 1 record is kept for today.`,
-          date: todayStr,
-          timestamp: nowTime,
+            : `Duplicate check-in recorded at ${recordTime}. Only 1 record is kept for today.`,
+          date: recordDate,
+          timestamp: recordTime,
           faceDistance: Number(faceDistance.toFixed(3)),
           gpsDistance: Math.round(gpsDistance),
         });
@@ -364,15 +377,18 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       await tursoQuery(
         env,
         'INSERT INTO attendance (id, student_id, roll_number, name, year, block, room_number, date, timestamp, latitude, longitude, face_distance, gps_distance, status, is_geofence_breach) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [attId, student.id, student.roll_number, student.name, student.year, student.block, student.room_number, todayStr, nowTime, latitude || 15.7743, longitude || 78.0547, faceDistance, gpsDistance, recordStatus, isGeofenceBreach ? 1 : 0]
+        [attId, student.id, student.roll_number, student.name, student.year, student.block, student.room_number, recordDate, recordTime, latitude || 15.7743, longitude || 78.0547, faceDistance, gpsDistance, recordStatus, isGeofenceBreach ? 1 : 0]
       );
 
       return jsonResponse({
         success: true,
         status: 'Attendance Submitted',
         message: 'Attendance check-in submitted successfully.',
-        date: todayStr,
-        timestamp: nowTime,
+        date: recordDate,
+        timestamp: recordTime,
+        faceDistance: Number(faceDistance.toFixed(3)),
+        gpsDistance: Math.round(gpsDistance),
+      });
         faceDistance: Number(faceDistance.toFixed(3)),
         gpsDistance: Math.round(gpsDistance),
       });
