@@ -159,7 +159,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       }
     }
 
-    const { dateStr: todayStr, timeStr: nowTime, hours, minutes } = getNowIST();
+    const { dateStr: todayStr, hours, minutes } = getNowIST();
 
     // 1. GET /api/settings
     if (pathname === '/api/settings') {
@@ -371,7 +371,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         await tursoQuery(
           env,
           'UPDATE attendance SET timestamp = ?, latitude = ?, longitude = ?, face_distance = ?, gps_distance = ?, status = ?, is_geofence_breach = ? WHERE id = ?',
-          [recordTime, latitude, longitude, faceDistance, gpsDistance, recordStatus, isGeofenceBreach ? 1 : 0, existing.id]
+          [recordTime, latitude, longitude, faceDistance, gpsDistance, recordStatus, 0, existing.id]
         );
 
         return jsonResponse({
@@ -394,7 +394,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       await tursoQuery(
         env,
         'INSERT INTO attendance (id, student_id, roll_number, name, year, block, room_number, date, timestamp, latitude, longitude, face_distance, gps_distance, status, is_geofence_breach) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [attId, student.id, student.roll_number, student.name, student.year, student.block, student.room_number, recordDate, recordTime, latitude || 15.7743, longitude || 78.0547, faceDistance, gpsDistance, recordStatus, isGeofenceBreach ? 1 : 0]
+        [attId, student.id, student.roll_number, student.name, student.year, student.block, student.room_number, recordDate, recordTime, latitude || 15.7743, longitude || 78.0547, faceDistance, gpsDistance, recordStatus, 0]
       );
 
       return jsonResponse({
@@ -403,9 +403,6 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         message: 'Attendance check-in submitted successfully.',
         date: recordDate,
         timestamp: recordTime,
-        faceDistance: Number(faceDistance.toFixed(3)),
-        gpsDistance: Math.round(gpsDistance),
-      });
         faceDistance: Number(faceDistance.toFixed(3)),
         gpsDistance: Math.round(gpsDistance),
       });
