@@ -53,5 +53,5 @@ export async function executeTursoQuery(sql: string, args: any[] = []): Promise<
 export function isStaticDeployment(): boolean {
   if (typeof window === 'undefined') return false;
   const host = window.location.hostname;
-  return host.includes('github.io') || host.includes('pages.dev') || host.includes('vercel.app') || window.location.protocol === 'file:';
+  return host.includes('github.io') || host.includes('vercel.app') || window.location.protocol === 'file:';
 }

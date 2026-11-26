@@ -73,7 +73,7 @@ async function pullFromTurso(localDb) {
     
     // 1. Pull users with enrolled faces or updated credentials
     const userRes = await tursoPipeline([
-      { sql: 'SELECT id, roll_number, name, email, password_hash, face_enrolled, face_descriptor, face_photo, face_enroll_attempts, streak, dinner_rsvp FROM users WHERE face_enrolled = 1 OR face_descriptor IS NOT NULL OR password_hash IS NOT NULL' }
+      { sql: 'SELECT id, roll_number, name, email, password_hash, face_enrolled, face_descriptor, face_photo, face_enrolled_at, face_enroll_attempts, streak, dinner_rsvp FROM users WHERE face_enrolled = 1 OR face_descriptor IS NOT NULL OR face_photo IS NOT NULL OR password_hash IS NOT NULL' }
     ]);
 
     if (userRes && userRes[0]?.type === 'ok') {
@@ -90,12 +90,13 @@ async function pullFromTurso(localDb) {
         // Update local DB
         localDb.prepare(`
           UPDATE users
-          SET face_enrolled = ?, face_descriptor = ?, face_photo = ?, face_enroll_attempts = ?, password_hash = COALESCE(?, password_hash), streak = ?, dinner_rsvp = ?
+          SET face_enrolled = ?, face_descriptor = ?, face_photo = ?, face_enrolled_at = COALESCE(?, face_enrolled_at), face_enroll_attempts = ?, password_hash = COALESCE(?, password_hash), streak = ?, dinner_rsvp = ?
           WHERE id = ? OR roll_number = ?
         `).run(
           obj.face_enrolled ? Number(obj.face_enrolled) : 0,
           obj.face_descriptor,
           obj.face_photo,
+          obj.face_enrolled_at || null,
           obj.face_enroll_attempts ? Number(obj.face_enroll_attempts) : 0,
           obj.password_hash,
           obj.streak ? Number(obj.streak) : 0,

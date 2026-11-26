@@ -35,15 +35,186 @@ export function initApiInterceptor() {
 
       // 1. GET /api/settings
       if (pathname === '/api/settings') {
-        const rows = await executeTursoQuery('SELECT setting_key, setting_value FROM hostel_settings');
+        const rows = await executeTursoQuery('SELECT key, value FROM hostel_settings');
         const settings: Record<string, string> = {};
-        rows.forEach((r) => { settings[r.setting_key] = r.setting_value; });
+        rows.forEach((r) => {
+          if (r.key) settings[r.key] = r.value;
+        });
         return jsonResponse({
           success: true,
           settings,
-          center: { lat: 15.7743, lng: 78.0547 },
-          windowStatus: { isOpen: true, startTime: settings.frs_start_time || '17:00', endTime: settings.frs_end_time || '19:00' },
+          center: {
+            lat: parseFloat(settings.geo_center_lat || '15.7743'),
+            lng: parseFloat(settings.geo_center_lng || '78.0547'),
+            radius_meters: parseFloat(settings.geo_radius_meters || '100.0'),
+          },
+          windowStatus: computeBridgeWindowStatus(settings),
         });
+      }
+
+      // 1b. POST /api/warden/settings
+      if (pathname === '/api/warden/settings' && method === 'POST') {
+        const allowedKeys = [
+          'frs_start_time',
+          'frs_end_time',
+          'frs_window_override',
+          'geo_radius_meters',
+          'geo_q1_lat',
+          'geo_q1_lng',
+          'geo_q2_lat',
+          'geo_q2_lng',
+          'geo_q3_lat',
+          'geo_q3_lng',
+          'geo_q4_lat',
+          'geo_q4_lng',
+          'geo_center_lat',
+          'geo_center_lng',
+        ];
+        for (const k of allowedKeys) {
+          if (body[k] !== undefined && body[k] !== null && body[k] !== '') {
+            await executeTursoQuery(
+              'INSERT OR REPLACE INTO hostel_settings (key, value) VALUES (?, ?)',
+              [k, String(body[k])]
+            );
+          }
+        }
+        const rows = await executeTursoQuery('SELECT key, value FROM hostel_settings');
+        const settings: Record<string, string> = {};
+        rows.forEach((r) => {
+          if (r.key) settings[r.key] = r.value;
+        });
+        return jsonResponse({
+          success: true,
+          message: 'FRS timings and GPS geofence updated in Turso Cloud.',
+          windowStatus: computeBridgeWindowStatus(settings),
+        });
+      }
+
+      // 1c. GET /api/auth/verify-student
+      if (pathname === '/api/auth/verify-student') {
+        const roll = (parsedUrl.searchParams.get('roll_number') || '').trim().toUpperCase();
+        if (!roll) {
+          return jsonResponse({ success: false, error: 'Roll number is required.' }, 400);
+        }
+        const rows = await executeTursoQuery(
+          'SELECT * FROM users WHERE UPPER(roll_number) = ? OR LOWER(email) = LOWER(?) LIMIT 1',
+          [roll, roll]
+        );
+        if (rows.length === 0) {
+          return jsonResponse({ success: false, eligible: false, error: 'Roll number not found in roster.' }, 404);
+        }
+        const st = rows[0];
+        const isEnrolled = Number(st.face_enrolled) === 1 || Boolean(st.face_photo) || Boolean(st.face_descriptor);
+        return jsonResponse({
+          success: true,
+          eligible: true,
+          alreadyRegistered: Number(st.is_activated) === 1,
+          student: {
+            roll_number: st.roll_number,
+            name: st.name,
+            email: st.email,
+            year: st.year,
+            block: st.block,
+            room_number: st.room_number,
+            branch: st.branch,
+            is_activated: Number(st.is_activated) === 1,
+            face_enrolled: isEnrolled,
+          },
+        });
+      }
+
+      // 1d. POST /api/auth/send-registration-otp
+      if (pathname === '/api/auth/send-registration-otp' && method === 'POST') {
+        const qRoll = String(body.roll_number || '').trim().toUpperCase();
+        const qEmail = String(body.email || '').trim().toLowerCase();
+        const rows = await executeTursoQuery(
+          'SELECT * FROM users WHERE UPPER(roll_number) = ? OR LOWER(email) = LOWER(?) LIMIT 1',
+          [qRoll || qEmail, qEmail || qRoll]
+        );
+        if (rows.length === 0) {
+          return jsonResponse({ success: false, error: 'Roll number not found in approved hostel admission roster.' }, 404);
+        }
+        const st = rows[0];
+        if (Number(st.is_activated) === 1) {
+          return jsonResponse({ success: false, error: `Account for ${st.roll_number} is already activated. Please sign in.` }, 409);
+        }
+        const targetEmail = (qEmail && qEmail.includes('@')) ? qEmail : (st.email || `${st.roll_number.toLowerCase()}@gprec.ac.in`);
+        const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+        return jsonResponse({
+          success: true,
+          message: `[Verification Code] Enter 6-digit code: ${otpCode}`,
+          email: targetEmail,
+          studentName: st.name,
+          rollNumber: st.roll_number,
+          block: st.block,
+          roomNumber: st.room_number,
+          year: st.year,
+          devOtp: otpCode,
+        });
+      }
+
+      // 1e. POST /api/auth/register
+      if (pathname === '/api/auth/register' && method === 'POST') {
+        const name = String(body.name || '').trim();
+        const roll = String(body.roll_number || '').trim().toUpperCase();
+        const email = String(body.email || '').trim().toLowerCase();
+        const year = String(body.year || '1');
+        const block = String(body.block || 'Anapurna-A');
+        const room = String(body.room_number || 'A-101').trim().toUpperCase();
+        if (!name || !email || !body.password) {
+          return jsonResponse({ success: false, error: 'Name, email, and password are required.' }, 400);
+        }
+        if (!email.endsWith('@gprec.ac.in')) {
+          return jsonResponse({ success: false, error: 'Official college email must end with @gprec.ac.in' }, 400);
+        }
+        const existingRows = await executeTursoQuery(
+          'SELECT * FROM users WHERE UPPER(roll_number) = ? OR LOWER(email) = LOWER(?) LIMIT 1',
+          [roll || email, email]
+        );
+        let user: any;
+        if (existingRows.length > 0) {
+          const existing = existingRows[0];
+          if (Number(existing.is_activated) === 1) {
+            return jsonResponse({ success: false, error: `Account for ${existing.roll_number} is already registered. Please log in.` }, 409);
+          }
+          await executeTursoQuery(
+            'UPDATE users SET name = ?, email = ?, is_activated = 1 WHERE id = ?',
+            [name, email, existing.id]
+          );
+          user = { ...existing, name, email, is_activated: 1 };
+        } else {
+          const newId = `usr-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+          await executeTursoQuery(
+            "INSERT INTO users (id, name, roll_number, email, password_hash, role, year, block, room_number, is_activated, face_enrolled, streak, dinner_rsvp) VALUES (?, ?, ?, ?, 'Student@123', 'student', ?, ?, ?, 1, 0, 0, 1)",
+            [newId, name, roll || newId, email, year, block, room]
+          );
+          user = {
+            id: newId,
+            name,
+            roll_number: roll || newId,
+            email,
+            role: 'student',
+            year,
+            block,
+            room_number: room,
+            face_enrolled: 0,
+          };
+        }
+        return jsonResponse({
+          success: true,
+          message: 'Account registered successfully.',
+          user: {
+            id: user.id,
+            name: user.name,
+            roll_number: user.roll_number,
+            email: user.email,
+            role: 'student',
+            year: user.year,
+            block: user.block,
+            room_number: user.room_number,
+            face_enrolled: Number(user.face_enrolled) === 1,
+          },
+        }, 201);
       }
 
       // 2. POST /api/auth/login
@@ -73,6 +244,7 @@ export function initApiInterceptor() {
             faceEnrolled: isEnrolled,
             face_photo: student.face_photo || null,
             facePhoto: student.face_photo || null,
+            face_enrolled_at: student.face_enrolled_at || null,
             streak: Number(student.streak || 1),
             dinnerRsvp: student.dinner_rsvp === undefined || student.dinner_rsvp === null ? true : Number(student.dinner_rsvp) === 1,
           },
@@ -115,18 +287,24 @@ export function initApiInterceptor() {
 
       // 5. POST /api/students/enroll-face || /api/student/enroll-face
       if ((pathname === '/api/students/enroll-face' || pathname === '/api/student/enroll-face') && method === 'POST') {
-        const { roll_number, face_descriptor, face_photo } = body;
-        const targetRoll = (roll_number || '').trim().toUpperCase();
+        const { roll_number, student_id, face_descriptor, face_photo, attempts_used, client_enrolled_at } = body;
+        const targetRoll = String(roll_number || student_id || '').trim().toUpperCase();
+        const targetId = String(student_id || roll_number || '').trim();
+        const enrolledAt = (typeof client_enrolled_at === 'string' && client_enrolled_at.trim())
+          ? client_enrolled_at.trim()
+          : formatBridgeISTDateTime();
+        const attempts = Math.min(Math.max(Number(attempts_used) || 1, 1), 3);
         const descriptorJson = JSON.stringify(face_descriptor);
         await executeTursoQuery(
-          'UPDATE users SET face_descriptor = ?, face_photo = ?, face_enrolled = 1 WHERE UPPER(roll_number) = ?',
-          [descriptorJson, face_photo, targetRoll]
+          'UPDATE users SET face_descriptor = ?, face_photo = ?, face_enrolled = 1, face_enrolled_at = ?, face_enroll_attempts = ? WHERE UPPER(roll_number) = ? OR id = ?',
+          [descriptorJson, face_photo, enrolledAt, attempts, targetRoll, targetId]
         );
         return jsonResponse({
           success: true,
           message: 'Biometric face profile and Smart ID photo saved to Turso Cloud! Smart ID Card and FRS enrolled.',
-          attemptsUsed: 1,
-          remainingAttempts: 2,
+          face_enrolled_at: enrolledAt,
+          attemptsUsed: attempts,
+          remainingAttempts: Math.max(0, 3 - attempts),
         });
       }
 
@@ -219,14 +397,33 @@ export function initApiInterceptor() {
 
       // 7. GET /api/warden/dashboard
       if (pathname === '/api/warden/dashboard') {
-        const queryDate = parsedUrl.searchParams.get('date') || new Date().toISOString().split('T')[0];
-        const allStudentsRaw = await executeTursoQuery("SELECT * FROM users WHERE role = 'student'");
+        const istToday = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+        const queryDate = parsedUrl.searchParams.get('date') || istToday;
+        const allStudentsRaw = await executeTursoQuery(
+          "SELECT id, roll_number, name, email, role, year, block, room_number, face_enrolled, face_photo, face_enrolled_at, face_enroll_attempts, streak, dinner_rsvp, student_phone, father_phone, (face_descriptor IS NOT NULL AND face_descriptor != '') AS has_descriptor FROM users WHERE role = 'student'"
+        );
         const allStudents = allStudentsRaw.map((s) => {
-          const isEnrolled = Number(s.face_enrolled) === 1 || Boolean(s.face_photo) || Boolean(s.face_descriptor);
+          const isEnrolled = Number(s.face_enrolled) === 1 || Boolean(s.face_photo) || Number(s.has_descriptor) === 1;
           return {
-            ...s,
+            id: s.roll_number || s.id,
+            roll_number: s.roll_number || s.id,
+            name: s.name,
+            email: s.email,
+            year: formatBridgeYearLabel(s.year),
+            block: s.block || 'Anapurna-A',
+            room: s.room_number || 'A-101',
+            room_number: s.room_number || 'A-101',
             face_enrolled: isEnrolled ? 1 : 0,
             faceEnrolled: isEnrolled,
+            face_photo: s.face_photo || null,
+            facePhoto: s.face_photo || null,
+            face_enrolled_at: s.face_enrolled_at || null,
+            face_enroll_attempts: Number(s.face_enroll_attempts || 0),
+            profileStatus: isEnrolled ? 'FRS Enrolled' : 'Enrollment Pending',
+            streak: isEnrolled ? Number(s.streak || 0) : 0,
+            dinnerRsvp: s.dinner_rsvp === undefined || s.dinner_rsvp === null ? true : Number(s.dinner_rsvp) === 1,
+            father_phone: s.father_phone,
+            student_phone: s.student_phone,
           };
         });
         const attendanceRows = await executeTursoQuery('SELECT * FROM attendance WHERE date = ?', [queryDate]);
@@ -242,7 +439,7 @@ export function initApiInterceptor() {
           studentId: a.roll_number,
           roll_number: a.roll_number,
           name: a.name,
-          year: a.year,
+          year: formatBridgeYearLabel(a.year),
           block: a.block,
           room: a.room_number,
           timestamp: a.timestamp,
@@ -255,7 +452,7 @@ export function initApiInterceptor() {
           studentId: l.roll_number,
           roll_number: l.roll_number,
           name: l.student_name,
-          year: l.year,
+          year: formatBridgeYearLabel(l.year),
           block: l.block,
           leaveType: l.type,
           fromDate: l.from_date,
@@ -265,21 +462,32 @@ export function initApiInterceptor() {
         const presentRolls = new Set(attendanceRows.map((a) => a.roll_number));
         const leaveRolls = new Set(approvedLeaves.map((l) => l.roll_number));
         const absentStudents = allStudents.filter((s) => !presentRolls.has(s.roll_number) && !leaveRolls.has(s.roll_number));
+        const enrolledFaceCount = allStudents.filter((s) => s.faceEnrolled).length;
 
         return jsonResponse({
           success: true,
+          syncedAt: formatBridgeISTDateTime(),
           allStudents,
           presentStudents,
           absentStudents,
           leaveStudents,
           outpasses: allOutpasses,
           tickets: allTickets,
-          outOfRangeAlerts: attendanceRows.filter((a) => a.is_geofence_breach === 1),
+          outOfRangeAlerts: attendanceRows.filter((a) => Number(a.is_geofence_breach) === 1),
+          kpis: {
+            totalStudents: allStudents.length,
+            presentCount: presentStudents.length,
+            absentCount: absentStudents.length,
+            leaveCount: leaveStudents.length,
+            enrolledFaceCount,
+            pendingFaceCount: allStudents.length - enrolledFaceCount,
+          },
           stats: {
             total: allStudents.length,
             present: presentStudents.length,
             absent: absentStudents.length,
             leaves: leaveStudents.length,
+            enrolledFaceCount,
             percent: Math.round((presentStudents.length / (allStudents.length || 1)) * 100),
           },
         });
@@ -323,10 +531,11 @@ export function initApiInterceptor() {
 
       // 10. POST /api/warden/students/reset-face
       if (pathname === '/api/warden/students/reset-face' && method === 'POST') {
-        const roll = (body.roll_number || '').trim().toUpperCase();
+        const roll = String(body.roll_number || body.student_id || '').trim().toUpperCase();
+        const sId = String(body.student_id || body.roll_number || '').trim();
         await executeTursoQuery(
-          'UPDATE users SET face_descriptor = NULL, face_photo = NULL, face_enrolled = 0, face_enroll_attempts = 0 WHERE UPPER(roll_number) = ?',
-          [roll]
+          'UPDATE users SET face_descriptor = NULL, face_photo = NULL, face_enrolled = 0, face_enrolled_at = NULL, face_enroll_attempts = 0 WHERE UPPER(roll_number) = ? OR id = ?',
+          [roll, sId]
         );
         return jsonResponse({ success: true, message: `Face ID reset for ${roll}.` });
       }
@@ -344,6 +553,54 @@ export function initApiInterceptor() {
       return jsonResponse({ success: false, error: err.message }, 500);
     }
   };
+}
+
+function formatBridgeISTDateTime(now: Date = new Date()): string {
+  const formatted = now.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  });
+  return `${formatted} IST`;
+}
+
+function formatBridgeYearLabel(rawYear: unknown): string {
+  const y = String(rawYear || '').trim();
+  if (!y) return '1st Year';
+  if (y === '1' || y.startsWith('1')) return '1st Year';
+  if (y === '2' || y.startsWith('2')) return '2nd Year';
+  if (y === '3' || y.startsWith('3')) return '3rd Year';
+  if (y === '4' || y.startsWith('4')) return '4th Year';
+  if (y.toLowerCase().includes('alumni')) return 'Alumni Year';
+  return y;
+}
+
+function computeBridgeWindowStatus(settings: Record<string, string>) {
+  const startTime = settings.frs_start_time || '17:00';
+  const endTime = settings.frs_end_time || '19:00';
+  const override = settings.frs_window_override || 'auto';
+  if (override === 'open') return { isOpen: true, status: 'OPEN', override: true, startTime, endTime };
+  if (override === 'closed') return { isOpen: false, status: 'CLOSED', override: true, startTime, endTime };
+
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Kolkata',
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false,
+  }).formatToParts(now);
+  const h = parseInt(parts.find((p) => p.type === 'hour')?.value || '0', 10) % 24;
+  const m = parseInt(parts.find((p) => p.type === 'minute')?.value || '0', 10);
+  const startParts = startTime.split(':').map(Number);
+  const endParts = endTime.split(':').map(Number);
+  const curMin = h * 60 + m;
+  const isOpen = curMin >= (startParts[0] || 17) * 60 + (startParts[1] || 0) && curMin <= (endParts[0] || 19) * 60 + (endParts[1] || 0);
+  return { isOpen, status: isOpen ? 'OPEN' : 'CLOSED', override: false, startTime, endTime };
 }
 
 function jsonResponse(data: any, status = 200): Response {

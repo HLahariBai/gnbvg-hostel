@@ -105,6 +105,7 @@ interface StudentUser {
   face_enrolled?: number | boolean;
   face_photo?: string | null;
   facePhoto?: string | null;
+  face_enrolled_at?: string | null;
   face_enroll_attempts?: number;
   streak: number;
   dinnerRsvp: boolean;
@@ -344,6 +345,9 @@ export const ZostelHostelPortal: React.FC = () => {
     error?: string;
   } | null>(null);
   const [idCardTilt, setIdCardTilt] = useState<{ rx: number; ry: number }>({ rx: 0, ry: 0 });
+  const [lastSyncedAt, setLastSyncedAt] = useState<string>('');
+  const [isSyncingDashboard, setIsSyncingDashboard] = useState(false);
+  const [wardenEnrollFilter, setWardenEnrollFilter] = useState<'ALL' | 'ENROLLED' | 'PENDING'>('ALL');
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const attendanceVideoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -358,22 +362,32 @@ export const ZostelHostelPortal: React.FC = () => {
     }, 3800);
   };
 
-  // Fetch SQLite live stats on mount & whenever filters change
-  const fetchWardenDashboard = async () => {
+  // Fetch live stats on mount, filter change, 20s polling & manual sync
+  const fetchWardenDashboard = async (showFeedback = false) => {
+    setIsSyncingDashboard(true);
     try {
-      const res = await fetch(`/api/warden/dashboard?date=${wardenDate}&year=${wardenYearFilter}&block=${wardenBlockFilter}`);
+      const res = await fetch(
+        `/api/warden/dashboard?date=${wardenDate}&year=${wardenYearFilter}&block=${wardenBlockFilter}&_t=${Date.now()}`,
+        { cache: 'no-store' }
+      );
       if (res.ok) {
         const data = await res.json();
         if (data && data.success) {
+          let enrolledNow = 0;
           if (data.allStudents && data.allStudents.length > 0) {
-            const normalizedStudents = data.allStudents.map((s: any) => {
+            const normalizedStudents: StudentUser[] = data.allStudents.map((s: any) => {
               const enrolled = isStudentFaceEnrolled(s);
+              if (enrolled) enrolledNow++;
               return {
                 ...s,
+                id: s.roll_number || s.id,
+                roll_number: s.roll_number || s.id,
+                room: s.room || s.room_number || 'A-101',
                 faceEnrolled: enrolled,
                 face_enrolled: enrolled ? 1 : 0,
                 face_photo: s.face_photo || s.facePhoto || null,
                 facePhoto: s.face_photo || s.facePhoto || null,
+                face_enrolled_at: s.face_enrolled_at || null,
               };
             });
             setStudents(normalizedStudents);
@@ -413,10 +427,25 @@ export const ZostelHostelPortal: React.FC = () => {
           } else {
             setOutOfRangeAlerts([]);
           }
+          const istNow = new Date().toLocaleTimeString('en-US', {
+            timeZone: 'Asia/Kolkata',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true,
+          });
+          setLastSyncedAt(`${istNow} IST`);
+          if (showFeedback) {
+            showToast('Live Sync Complete ✓', `${enrolledNow} students enrolled in cloud (${data.allStudents?.length || 0} total roster).`);
+          }
         }
       }
     } catch (err) {
-      // Local interactive mode
+      if (showFeedback) {
+        showToast('Sync Warning', 'Could not reach cloud server right now.', 'warning');
+      }
+    } finally {
+      setIsSyncingDashboard(false);
     }
   };
 
@@ -530,8 +559,14 @@ export const ZostelHostelPortal: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchWardenDashboard();
-  }, [wardenDate, wardenYearFilter, wardenBlockFilter, isWardenAuthenticated]);
+    fetchWardenDashboard(false);
+    if (activePortal === 'warden' && isWardenAuthenticated) {
+      const interval = setInterval(() => {
+        fetchWardenDashboard(false);
+      }, 20000);
+      return () => clearInterval(interval);
+    }
+  }, [wardenDate, wardenYearFilter, wardenBlockFilter, isWardenAuthenticated, activePortal]);
 
   useEffect(() => {
     if (currentStudent) {
@@ -782,6 +817,7 @@ export const ZostelHostelPortal: React.FC = () => {
           ) ? 1 : 0,
           face_photo: data.user.face_photo || data.user.facePhoto || null,
           facePhoto: data.user.face_photo || data.user.facePhoto || null,
+          face_enrolled_at: data.user.face_enrolled_at || null,
           face_enroll_attempts: data.user.face_enroll_attempts || 0,
           streak: data.user.streak || 0,
           dinnerRsvp: Boolean(data.user.dinnerRsvp ?? true),
@@ -1074,6 +1110,17 @@ export const ZostelHostelPortal: React.FC = () => {
     if (!currentStudent || !capturedPhotoPreview || !capturedDescriptor) return;
     setIsEnrollingFace(true);
 
+    const clientEnrolledAt = `${new Date().toLocaleString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true,
+    })} IST`;
+
     try {
       const res = await fetch('/api/students/enroll-face', {
         method: 'POST',
@@ -1084,10 +1131,12 @@ export const ZostelHostelPortal: React.FC = () => {
           face_descriptor: capturedDescriptor,
           face_photo: capturedPhotoPreview,
           attempts_used: enrollAttemptCount,
+          client_enrolled_at: clientEnrolledAt,
         }),
       });
       const data = await res.json();
       if (res.ok && data.success) {
+        const finalEnrolledAt = data.face_enrolled_at || clientEnrolledAt;
         localStorage.setItem(`gnbvg_face_${currentStudent.id}`, JSON.stringify(capturedDescriptor));
         const updated: StudentUser = {
           ...currentStudent,
@@ -1095,6 +1144,7 @@ export const ZostelHostelPortal: React.FC = () => {
           face_enrolled: 1,
           face_photo: capturedPhotoPreview,
           facePhoto: capturedPhotoPreview,
+          face_enrolled_at: finalEnrolledAt,
           face_enroll_attempts: enrollAttemptCount,
         };
         setCurrentStudent(updated);
@@ -1103,7 +1153,7 @@ export const ZostelHostelPortal: React.FC = () => {
         setCapturedDescriptor(null);
         showToast('Smart ID Card and FRS are successfully enrolled! ✓', data.message || 'Face template & photo securely saved in database.');
         // Refresh warden dashboard immediately so warden sees enrolled status
-        fetchWardenDashboard();
+        fetchWardenDashboard(false);
       } else {
         showToast('Enrollment Failed', data.error || 'Could not save face template in database.', 'error');
       }
@@ -2005,8 +2055,27 @@ export const ZostelHostelPortal: React.FC = () => {
   const presentPct = totalFiltered ? Math.round((presentList.length / totalFiltered) * 100) : 0;
   const absentPct = totalFiltered ? Math.round((absentList.length / totalFiltered) * 100) : 0;
   const leavePct = totalFiltered ? Math.round((leaveList.length / totalFiltered) * 100) : 0;
+  const enrolledCount = filteredStudents.filter((s) => isStudentFaceEnrolled(s)).length;
+  const enrolledPct = totalFiltered ? Math.round((enrolledCount / totalFiltered) * 100) : 0;
   const unenrolledCount = filteredStudents.filter((s) => !isStudentFaceEnrolled(s)).length;
   const unenrolledPct = totalFiltered ? Math.round((unenrolledCount / totalFiltered) * 100) : 0;
+
+  const displayedResidents = filteredStudents
+    .filter((s) => {
+      const enrolled = isStudentFaceEnrolled(s);
+      if (wardenEnrollFilter === 'ENROLLED') return enrolled;
+      if (wardenEnrollFilter === 'PENDING') return !enrolled;
+      return true;
+    })
+    .slice()
+    .sort((a, b) => {
+      if (wardenEnrollFilter === 'ENROLLED') {
+        const aTime = a.face_enrolled_at ? 1 : 0;
+        const bTime = b.face_enrolled_at ? 1 : 0;
+        if (bTime !== aTime) return bTime - aTime;
+      }
+      return 0;
+    });
 
   return (
     <div className="min-h-screen flex flex-col antialiased bg-cream text-slate-800 font-sans selection:bg-coral selection:text-white">
@@ -2876,8 +2945,11 @@ export const ZostelHostelPortal: React.FC = () => {
 
                             <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 text-xs">
                               <div className="bg-slate-50 p-2.5 rounded-xl">
-                                <span className="text-[10px] uppercase font-bold text-slate-400 block">Biometric Descriptor</span>
-                                <span className="font-bold text-emerald-700">128-D Vector Stored ✓</span>
+                                <span className="text-[10px] uppercase font-bold text-slate-400 block">Biometric Enrollment</span>
+                                <span className="font-bold text-emerald-700 block">128-D Vector Stored ✓</span>
+                                <span className="text-[10px] font-mono text-slate-500 mt-0.5 block">
+                                  Enrolled: {currentStudent.face_enrolled_at || 'Verified (Prior)'}
+                                </span>
                               </div>
                               <div className="bg-slate-50 p-2.5 rounded-xl">
                                 <span className="text-[10px] uppercase font-bold text-slate-400 block">Daily Attendance Status</span>
@@ -3551,17 +3623,33 @@ export const ZostelHostelPortal: React.FC = () => {
             ) : (
               /* WARDEN DASHBOARD WORKSPACE */
               <div className="space-y-8">
-                {/* Header with sign out */}
-                <div className="flex items-center justify-between">
+                {/* Header with Live Cloud Sync & sign out */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
-                    <h2 className="font-display font-extrabold text-2xl text-slate-900">
-                      Hostel Operations & Attendance Monitor
-                    </h2>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="font-display font-extrabold text-2xl text-slate-900">
+                        Hostel Operations & Attendance Monitor
+                      </h2>
+                      <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-extrabold inline-flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                        <span>Live Sync {lastSyncedAt ? `• Updated ${lastSyncedAt}` : '• Connecting...'}</span>
+                      </span>
+                    </div>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Live sync across all 3 wings: Anapurna-A, Arundhathi-B, Anuradha-C
+                      Live sync across all 3 wings: Anapurna-A, Arundhathi-B, Anuradha-C (auto-refreshes every 20s)
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2.5">
+                    <button
+                      type="button"
+                      disabled={isSyncingDashboard}
+                      onClick={() => fetchWardenDashboard(true)}
+                      className="px-4 py-2 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold transition flex items-center gap-1.5 shadow-sm disabled:opacity-60"
+                      title="Pull latest enrolled students and check-ins from Turso Cloud right now"
+                    >
+                      <RotateCcw className={`w-3.5 h-3.5 ${isSyncingDashboard ? 'animate-spin' : ''}`} />
+                      <span>{isSyncingDashboard ? 'Syncing...' : 'Sync Live'}</span>
+                    </button>
                     <button
                       onClick={handlePromoteBatch}
                       className="px-4 py-2 rounded-2xl bg-amberwarm-light hover:bg-amberwarm text-slate-800 text-xs font-bold transition flex items-center gap-1.5 shadow-sm border border-amber-300"
@@ -3580,10 +3668,16 @@ export const ZostelHostelPortal: React.FC = () => {
                   </div>
                 </div>
 
-                {/* 5 KPI SUMMARY CARDS */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                {/* 6 KPI SUMMARY CARDS */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
                   {/* Total Students */}
-                  <div className="bg-white rounded-3xl p-5 shadow-md border border-slate-100 hover:-translate-y-1 transition-all">
+                  <div
+                    onClick={() => {
+                      setWardenEnrollFilter('ALL');
+                      setWardenActiveTab('all');
+                    }}
+                    className="cursor-pointer bg-white rounded-3xl p-5 shadow-md border border-slate-100 hover:-translate-y-1 transition-all"
+                  >
                     <div className="flex items-center justify-between">
                       <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400">
                         Total Students
@@ -3599,6 +3693,35 @@ export const ZostelHostelPortal: React.FC = () => {
                       <div className="bg-indigo-500 h-full rounded-full w-full" />
                     </div>
                     <p className="text-[11px] text-slate-500 mt-2 font-medium">Filtered roster</p>
+                  </div>
+
+                  {/* Face Enrolled */}
+                  <div
+                    onClick={() => {
+                      setWardenEnrollFilter('ENROLLED');
+                      setWardenActiveTab('all');
+                    }}
+                    className="cursor-pointer bg-white rounded-3xl p-5 shadow-md border border-emerald-200 hover:-translate-y-1 transition-all ring-1 ring-emerald-100"
+                    title="Click to view enrolled students with enrollment timestamps"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-700">
+                        Face Enrolled
+                      </span>
+                      <div className="w-9 h-9 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                        <CheckCircle2 className="w-4 h-4" />
+                      </div>
+                    </div>
+                    <div className="font-display font-extrabold text-3xl text-emerald-700 mt-2.5">
+                      {enrolledCount}
+                    </div>
+                    <div className="mt-2.5 w-full bg-emerald-50 h-2 rounded-full overflow-hidden">
+                      <div
+                        className="bg-emerald-500 h-full rounded-full transition-all duration-500"
+                        style={{ width: `${enrolledPct}%` }}
+                      />
+                    </div>
+                    <p className="text-[11px] text-emerald-700 mt-2 font-semibold">{enrolledPct}% enrolled</p>
                   </div>
 
                   {/* Present Today */}
@@ -3668,7 +3791,14 @@ export const ZostelHostelPortal: React.FC = () => {
                   </div>
 
                   {/* Face Enrollment Pending */}
-                  <div className="bg-white rounded-3xl p-5 shadow-md border border-amber-100 hover:-translate-y-1 transition-all">
+                  <div
+                    onClick={() => {
+                      setWardenEnrollFilter('PENDING');
+                      setWardenActiveTab('all');
+                    }}
+                    className="cursor-pointer bg-white rounded-3xl p-5 shadow-md border border-amber-100 hover:-translate-y-1 transition-all"
+                    title="Click to filter students with pending face enrollment"
+                  >
                     <div className="flex items-center justify-between">
                       <span className="text-[11px] font-extrabold uppercase tracking-wider text-amber-600">
                         Face Pending
@@ -4019,6 +4149,51 @@ export const ZostelHostelPortal: React.FC = () => {
                   {/* TAB 0: ALL RESIDENTS */}
                   {wardenActiveTab === 'all' && (
                     <div className="p-6 overflow-x-auto">
+                      {/* Quick Biometric Enrollment Filter Pills */}
+                      <div className="flex flex-wrap items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-100">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400 mr-1">
+                            Enrollment Status:
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setWardenEnrollFilter('ALL')}
+                            className={`px-3 py-1.5 rounded-full text-xs font-extrabold transition ${
+                              wardenEnrollFilter === 'ALL'
+                                ? 'bg-slate-900 text-white shadow-xs'
+                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            }`}
+                          >
+                            All ({filteredStudents.length})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setWardenEnrollFilter('ENROLLED')}
+                            className={`px-3 py-1.5 rounded-full text-xs font-extrabold transition ${
+                              wardenEnrollFilter === 'ENROLLED'
+                                ? 'bg-emerald-600 text-white shadow-xs'
+                                : 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+                            }`}
+                          >
+                            ✓ Enrolled ({enrolledCount})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setWardenEnrollFilter('PENDING')}
+                            className={`px-3 py-1.5 rounded-full text-xs font-extrabold transition ${
+                              wardenEnrollFilter === 'PENDING'
+                                ? 'bg-amber-500 text-slate-950 shadow-xs'
+                                : 'bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100'
+                            }`}
+                          >
+                            ⏳ Pending ({unenrolledCount})
+                          </button>
+                        </div>
+                        <span className="text-[11px] font-semibold text-slate-500">
+                          Showing {displayedResidents.length} resident(s)
+                        </span>
+                      </div>
+
                       <table className="w-full text-left border-collapse">
                         <thead>
                           <tr className="border-b border-slate-200 text-[11px] font-extrabold uppercase tracking-wider text-slate-400">
@@ -4032,14 +4207,14 @@ export const ZostelHostelPortal: React.FC = () => {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 text-sm">
-                          {filteredStudents.length === 0 ? (
+                          {displayedResidents.length === 0 ? (
                             <tr>
                               <td colSpan={7} className="py-10 text-center text-slate-400 text-xs">
                                 No residents found matching your search or filters.
                               </td>
                             </tr>
                           ) : (
-                            filteredStudents.map((student) => {
+                            displayedResidents.map((student) => {
                               const rec = attendanceRecords.find(
                                 (r) => (r.studentId === student.id || r.id === student.id) && r.date === wardenDate && (r.status === 'Present' || r.status === 'Present (Warden Override)')
                               );
@@ -4115,21 +4290,27 @@ export const ZostelHostelPortal: React.FC = () => {
                                   </td>
                                   <td className="py-3.5 px-4">
                                     {isStudentFaceEnrolled(student) ? (
-                                      <div className="flex items-center gap-2">
-                                        <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1 w-fit">
-                                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                                          <span>FRS Enrolled ✓</span>
-                                        </span>
-                                        <button
-                                          type="button"
-                                          disabled={isResettingFace}
-                                          onClick={() => handleResetFaceId(student.roll_number || student.id, student.name)}
-                                          className="px-2 py-0.5 rounded-lg bg-amber-50 hover:bg-rose-50 text-amber-800 hover:text-rose-700 border border-amber-200 hover:border-rose-300 text-[10px] font-bold transition flex items-center gap-1 shadow-xs"
-                                          title="Mistaken face? Delete Face ID & grant re-enrollment"
-                                        >
-                                          <RotateCcw className="w-2.5 h-2.5 text-rose-500" />
-                                          <span>Reset</span>
-                                        </button>
+                                      <div className="space-y-1">
+                                        <div className="flex items-center gap-2">
+                                          <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1 w-fit">
+                                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                                            <span>FRS Enrolled ✓</span>
+                                          </span>
+                                          <button
+                                            type="button"
+                                            disabled={isResettingFace}
+                                            onClick={() => handleResetFaceId(student.roll_number || student.id, student.name)}
+                                            className="px-2 py-0.5 rounded-lg bg-amber-50 hover:bg-rose-50 text-amber-800 hover:text-rose-700 border border-amber-200 hover:border-rose-300 text-[10px] font-bold transition flex items-center gap-1 shadow-xs"
+                                            title="Mistaken face? Delete Face ID & grant re-enrollment"
+                                          >
+                                            <RotateCcw className="w-2.5 h-2.5 text-rose-500" />
+                                            <span>Reset</span>
+                                          </button>
+                                        </div>
+                                        <div className="text-[10px] font-mono text-slate-500 flex items-center gap-1">
+                                          <Clock className="w-3 h-3 text-emerald-600 shrink-0" />
+                                          <span>{student.face_enrolled_at || 'Verified (Prior)'}</span>
+                                        </div>
                                       </div>
                                     ) : (
                                       <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
@@ -4402,21 +4583,27 @@ export const ZostelHostelPortal: React.FC = () => {
                                 </td>
                                 <td className="py-3.5 px-4">
                                   {isStudentFaceEnrolled(student) ? (
-                                    <div className="flex items-center gap-2">
-                                      <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1 w-fit">
-                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                                        <span>FRS Enrolled ✓</span>
-                                      </span>
-                                      <button
-                                        type="button"
-                                        disabled={isResettingFace}
-                                        onClick={() => handleResetFaceId(student.roll_number || student.id, student.name)}
-                                        className="px-2 py-0.5 rounded-lg bg-amber-50 hover:bg-rose-50 text-amber-800 hover:text-rose-700 border border-amber-200 hover:border-rose-300 text-[10px] font-bold transition flex items-center gap-1 shadow-xs"
-                                        title="Mistaken face? Delete Face ID & grant re-enrollment"
-                                      >
-                                        <RotateCcw className="w-2.5 h-2.5 text-rose-500" />
-                                        <span>Reset</span>
-                                      </button>
+                                    <div className="space-y-1">
+                                      <div className="flex items-center gap-2">
+                                        <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1 w-fit">
+                                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                                          <span>FRS Enrolled ✓</span>
+                                        </span>
+                                        <button
+                                          type="button"
+                                          disabled={isResettingFace}
+                                          onClick={() => handleResetFaceId(student.roll_number || student.id, student.name)}
+                                          className="px-2 py-0.5 rounded-lg bg-amber-50 hover:bg-rose-50 text-amber-800 hover:text-rose-700 border border-amber-200 hover:border-rose-300 text-[10px] font-bold transition flex items-center gap-1 shadow-xs"
+                                          title="Mistaken face? Delete Face ID & grant re-enrollment"
+                                        >
+                                          <RotateCcw className="w-2.5 h-2.5 text-rose-500" />
+                                          <span>Reset</span>
+                                        </button>
+                                      </div>
+                                      <div className="text-[10px] font-mono text-slate-500 flex items-center gap-1">
+                                        <Clock className="w-3 h-3 text-emerald-600 shrink-0" />
+                                        <span>{student.face_enrolled_at || 'Verified (Prior)'}</span>
+                                      </div>
                                     </div>
                                   ) : (
                                     <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-amberwarm-light text-amber-700 border border-amber-200">
@@ -5088,6 +5275,11 @@ export const ZostelHostelPortal: React.FC = () => {
                     >
                       {isStudentFaceEnrolled(viewingStudent) ? '✓ FRS Biometric Active' : '⚠ Face Enrollment Pending'}
                     </span>
+                    {isStudentFaceEnrolled(viewingStudent) && (
+                      <span className="mt-1 text-[10px] font-mono text-slate-500">
+                        Enrolled: {viewingStudent.face_enrolled_at || 'Verified (Prior)'}
+                      </span>
+                    )}
                   </div>
 
                   {/* Download Smart ID Card PNG */}

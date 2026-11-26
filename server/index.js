@@ -160,6 +160,16 @@ function initDatabase() {
   // Safe table migrations
   try { db.exec("ALTER TABLE users ADD COLUMN face_photo TEXT;"); } catch {}
   try { db.exec("ALTER TABLE users ADD COLUMN face_enroll_attempts INTEGER NOT NULL DEFAULT 0;"); } catch {}
+  try { db.exec("ALTER TABLE users ADD COLUMN face_enrolled_at TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE attendance ADD COLUMN face_distance REAL;"); } catch {}
+  try { db.exec("ALTER TABLE attendance ADD COLUMN gps_distance REAL DEFAULT 0;"); } catch {}
+  try { db.exec("ALTER TABLE attendance ADD COLUMN is_geofence_breach INTEGER DEFAULT 0;"); } catch {}
+  try { db.exec("ALTER TABLE attendance ADD COLUMN warden_action TEXT DEFAULT 'Pending';"); } catch {}
+  try { db.exec("ALTER TABLE attendance ADD COLUMN action_timestamp TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE outpasses ADD COLUMN applied_at TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE outpasses ADD COLUMN approved_at TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE outpasses ADD COLUMN approved_by TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE maintenance_tickets ADD COLUMN resolved_at TEXT;"); } catch {}
 
   // Initialize or update default hostel settings (Timings & User GPS Geofence)
   const defaultSettings = [
@@ -332,6 +342,20 @@ function getNowIST() {
     hour12: true,
   });
   return { dateStr, timeStr, now };
+}
+
+function formatISTDateTime(now = new Date()) {
+  const formatted = now.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  });
+  return `${formatted} IST`;
 }
 
 function isFrsWindowOpen() {
@@ -802,6 +826,7 @@ app.post('/api/auth/login', (req, res) => {
         faceEnrolled: (user.face_enrolled == 1 || Boolean(user.face_photo) || Boolean(user.face_descriptor)),
         face_photo: user.face_photo || null,
         facePhoto: user.face_photo || null,
+        face_enrolled_at: user.face_enrolled_at || null,
         face_enroll_attempts: user.face_enroll_attempts || 0,
         streak: user.streak || 1,
         dinnerRsvp: user.dinner_rsvp === 1,
@@ -901,7 +926,7 @@ app.post('/api/auth/logout', (req, res) => {
 // POST /api/students/enroll-face & /api/student/enroll-face
 function handleEnrollFace(req, res) {
   try {
-    const { face_descriptor, roll_number, student_id, face_photo, attempts_used } = req.body;
+    const { face_descriptor, roll_number, student_id, face_photo, attempts_used, client_enrolled_at } = req.body;
     const targetRoll = (roll_number || req.user?.roll_number || '').trim().toUpperCase();
     const targetId = student_id || req.user?.id;
 
@@ -925,20 +950,23 @@ function handleEnrollFace(req, res) {
     const descriptorJson = JSON.stringify(face_descriptor.map(Number));
     const finalPhoto = face_photo || student.face_photo || null;
     const newAttempts = Math.min(Math.max(Number(attempts_used) || (student.face_enroll_attempts || 0) + 1, 1), 3);
+    const enrolledAt = (typeof client_enrolled_at === 'string' && client_enrolled_at.trim())
+      ? client_enrolled_at.trim()
+      : formatISTDateTime();
 
     const updateRes = db.prepare(`
       UPDATE users
-      SET face_descriptor = ?, face_photo = ?, face_enrolled = 1, face_enroll_attempts = ?
+      SET face_descriptor = ?, face_photo = ?, face_enrolled = 1, face_enrolled_at = ?, face_enroll_attempts = ?
       WHERE id = ?
-    `).run(descriptorJson, finalPhoto, newAttempts, student.id);
+    `).run(descriptorJson, finalPhoto, enrolledAt, newAttempts, student.id);
 
     // Mirror to Turso Cloud for 5-Year Permanent Storage
     tursoExecuteAsync(
-      'UPDATE users SET face_descriptor = ?, face_photo = ?, face_enrolled = 1, face_enroll_attempts = ? WHERE id = ? OR roll_number = ?',
-      [descriptorJson, finalPhoto, newAttempts, student.id, student.roll_number]
+      'UPDATE users SET face_descriptor = ?, face_photo = ?, face_enrolled = 1, face_enrolled_at = ?, face_enroll_attempts = ? WHERE id = ? OR roll_number = ?',
+      [descriptorJson, finalPhoto, enrolledAt, newAttempts, student.id, student.roll_number]
     );
 
-    console.log(`[FACE ENROLLED] Successfully saved 128-d face descriptor & photo for: ${student.roll_number} (${student.name}), attempt: ${newAttempts}/3`);
+    console.log(`[FACE ENROLLED] Successfully saved 128-d face descriptor & photo for: ${student.roll_number} (${student.name}), attempt: ${newAttempts}/3 at ${enrolledAt}`);
 
     // Create immediate persistent backup of updated biometrics
     createBiometricsBackup(db);
@@ -946,6 +974,7 @@ function handleEnrollFace(req, res) {
     res.json({
       success: true,
       message: `Biometric face profile and Smart ID photo saved for ${student.name} (${student.roll_number}). Smart ID Card and FRS are successfully enrolled!`,
+      face_enrolled_at: enrolledAt,
       attemptsUsed: newAttempts,
       remainingAttempts: Math.max(0, 3 - newAttempts),
       student: {
@@ -961,6 +990,7 @@ function handleEnrollFace(req, res) {
         faceEnrolled: true,
         face_photo: finalPhoto,
         facePhoto: finalPhoto,
+        face_enrolled_at: enrolledAt,
         face_enroll_attempts: newAttempts,
         streak: student.streak || 1,
       },
@@ -1002,13 +1032,14 @@ function handleResetFace(req, res) {
       SET face_descriptor = NULL,
           face_photo = NULL,
           face_enrolled = 0,
+          face_enrolled_at = NULL,
           face_enroll_attempts = 0
       WHERE id = ?
     `).run(student.id);
 
     // Mirror face reset to Turso Cloud
     tursoExecuteAsync(
-      'UPDATE users SET face_descriptor = NULL, face_photo = NULL, face_enrolled = 0, face_enroll_attempts = 0 WHERE id = ? OR roll_number = ?',
+      'UPDATE users SET face_descriptor = NULL, face_photo = NULL, face_enrolled = 0, face_enrolled_at = NULL, face_enroll_attempts = 0 WHERE id = ? OR roll_number = ?',
       [student.id, student.roll_number]
     );
 
@@ -1427,6 +1458,7 @@ function handleWardenReport(req, res) {
           gpsDistance: Math.round(att.gps_distance || 0),
           face_photo: s.face_photo || null,
           faceEnrolled: isEnrolled,
+          face_enrolled_at: s.face_enrolled_at || null,
         });
       }
       // Case 2: Out of Range Breach (High Priority Warden Alert)
@@ -1481,6 +1513,7 @@ function handleWardenReport(req, res) {
           faceEnrolled: isEnrolled,
           face_photo: s.face_photo || null,
           facePhoto: s.face_photo || null,
+          face_enrolled_at: s.face_enrolled_at || null,
           profileStatus: isEnrolled ? 'FRS Enrolled' : 'Enrollment Pending',
           dailyStatus: att && att.status === 'Absent' ? 'Absent' : 'Pending',
           status: att && att.status === 'Absent' ? 'Absent' : 'Pending',
@@ -1490,6 +1523,7 @@ function handleWardenReport(req, res) {
 
     res.json({
       success: true,
+      syncedAt: formatISTDateTime(),
       date: queryDate,
       filters: { year: queryYear, block: queryBlock },
       kpis: {
@@ -1542,6 +1576,7 @@ function handleWardenReport(req, res) {
           face_enrolled: isEnrolled ? 1 : 0,
           face_photo: s.face_photo || null,
           facePhoto: s.face_photo || null,
+          face_enrolled_at: s.face_enrolled_at || null,
           face_enroll_attempts: s.face_enroll_attempts || 0,
           profileStatus: isEnrolled ? 'FRS Enrolled' : 'Enrollment Pending',
           streak: isEnrolled ? (s.streak || 0) : 0,

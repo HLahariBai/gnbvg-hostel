@@ -31,7 +31,7 @@ export async function pullCloudDataToLocalPc() {
     console.log('[1/4] Connecting to Turso Cloud (aws-ap-south-1 Mumbai)...');
 
     const results = await tursoPipeline([
-      { sql: 'SELECT * FROM users WHERE face_enrolled = 1' },
+      { sql: 'SELECT * FROM users WHERE face_enrolled = 1 OR face_photo IS NOT NULL OR face_descriptor IS NOT NULL' },
       { sql: 'SELECT * FROM users' },
       { sql: 'SELECT * FROM attendance ORDER BY date DESC, timestamp DESC' },
       { sql: 'SELECT * FROM outpasses ORDER BY created_at DESC' },
@@ -97,18 +97,19 @@ export async function pullCloudDataToLocalPc() {
     // 3. Sync into Local SQLite Database (database/gnbvg.db)
     console.log(`[4/4] Synchronizing into Local PC SQLite Database (${dbPath})...`);
     const db = new DatabaseSync(dbPath);
+    try { db.exec('ALTER TABLE users ADD COLUMN face_enrolled_at TEXT;'); } catch {}
 
     const updateFace = db.prepare(`
       UPDATE users
-      SET face_descriptor = ?, face_photo = ?, face_enrolled = 1, streak = ?
+      SET face_descriptor = ?, face_photo = ?, face_enrolled = 1, face_enrolled_at = COALESCE(?, face_enrolled_at), streak = ?
       WHERE roll_number = ? OR id = ?
     `);
 
     let localUpdatedFaces = 0;
     for (const f of enrolledFaces) {
-      if (f.face_descriptor) {
+      if (f.face_descriptor || f.face_photo) {
         const roll = f.roll_number || f.id;
-        const res = updateFace.run(f.face_descriptor, f.face_photo || null, Number(f.streak || 1), roll, roll);
+        const res = updateFace.run(f.face_descriptor || null, f.face_photo || null, f.face_enrolled_at || null, Number(f.streak || 1), roll, roll);
         if (res.changes > 0) localUpdatedFaces++;
       }
     }
