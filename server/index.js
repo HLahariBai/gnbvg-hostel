@@ -1371,7 +1371,7 @@ function handleWardenReport(req, res) {
       return y || '1st Year';
     };
 
-    let userSql = "SELECT * FROM users WHERE role = 'student'";
+    let userSql = "SELECT id, roll_number, name, email, role, year, block, room_number, face_enrolled, face_enrolled_at, face_enroll_attempts, streak, dinner_rsvp, student_phone, father_phone, CASE WHEN face_photo IS NOT NULL AND length(face_photo) > 0 THEN 1 ELSE 0 END AS has_photo, CASE WHEN face_descriptor IS NOT NULL AND length(face_descriptor) > 0 THEN 1 ELSE 0 END AS has_descriptor FROM users WHERE role = 'student'";
     const userParams = [];
 
     if (queryYear !== 'ALL') {
@@ -1427,7 +1427,9 @@ function handleWardenReport(req, res) {
       const att = attMap.get(s.id) || attMap.get(s.roll_number);
       const leave = leaveMap.get(s.id) || leaveMap.get(s.roll_number);
       const studentYear = formatYr(s.year);
-      const isEnrolled = Number(s.face_enrolled) === 1 || Boolean(s.face_photo) || Boolean(s.face_descriptor);
+      const hasPhoto = Number(s.has_photo) === 1;
+      const hasDescriptor = Number(s.has_descriptor) === 1;
+      const isEnrolled = Number(s.face_enrolled) === 1 || hasPhoto || hasDescriptor;
 
       if (!isEnrolled) {
         pendingFaceStudents.push({
@@ -1456,7 +1458,10 @@ function handleWardenReport(req, res) {
           status: att.status,
           faceDistance: att.face_distance,
           gpsDistance: Math.round(att.gps_distance || 0),
-          face_photo: s.face_photo || null,
+          has_photo: hasPhoto,
+          has_descriptor: hasDescriptor,
+          face_photo: null,
+          facePhoto: null,
           faceEnrolled: isEnrolled,
           face_enrolled_at: s.face_enrolled_at || null,
         });
@@ -1511,8 +1516,10 @@ function handleWardenReport(req, res) {
           room: s.room_number,
           parent_phone: s.father_phone || s.student_phone || '+91 98490 22110',
           faceEnrolled: isEnrolled,
-          face_photo: s.face_photo || null,
-          facePhoto: s.face_photo || null,
+          has_photo: hasPhoto,
+          has_descriptor: hasDescriptor,
+          face_photo: null,
+          facePhoto: null,
           face_enrolled_at: s.face_enrolled_at || null,
           profileStatus: isEnrolled ? 'FRS Enrolled' : 'Enrollment Pending',
           dailyStatus: att && att.status === 'Absent' ? 'Absent' : 'Pending',
@@ -1532,7 +1539,7 @@ function handleWardenReport(req, res) {
         absentCount: absentStudents.length,
         outOfRangeCount: outOfRangeAlerts.length,
         leaveCount: leaveStudents.length,
-        enrolledFaceCount: allStudents.filter(s => Number(s.face_enrolled) === 1 || Boolean(s.face_photo) || Boolean(s.face_descriptor)).length,
+        enrolledFaceCount: allStudents.filter(s => Number(s.face_enrolled) === 1 || Number(s.has_photo) === 1 || Number(s.has_descriptor) === 1).length,
         pendingFaceCount: pendingFaceStudents.length,
       },
       presentStudents,
@@ -1563,7 +1570,9 @@ function handleWardenReport(req, res) {
         status: t.status,
       })),
       allStudents: allStudents.map(s => {
-        const isEnrolled = Number(s.face_enrolled) === 1 || Boolean(s.face_photo) || Boolean(s.face_descriptor);
+        const hasPhoto = Number(s.has_photo) === 1;
+        const hasDescriptor = Number(s.has_descriptor) === 1;
+        const isEnrolled = Number(s.face_enrolled) === 1 || hasPhoto || hasDescriptor;
         return {
           id: s.roll_number || s.id,
           roll_number: s.roll_number,
@@ -1574,8 +1583,10 @@ function handleWardenReport(req, res) {
           room: s.room_number || 'A-101',
           faceEnrolled: isEnrolled,
           face_enrolled: isEnrolled ? 1 : 0,
-          face_photo: s.face_photo || null,
-          facePhoto: s.face_photo || null,
+          has_photo: hasPhoto,
+          has_descriptor: hasDescriptor,
+          face_photo: null,
+          facePhoto: null,
           face_enrolled_at: s.face_enrolled_at || null,
           face_enroll_attempts: s.face_enroll_attempts || 0,
           profileStatus: isEnrolled ? 'FRS Enrolled' : 'Enrollment Pending',
@@ -1643,6 +1654,30 @@ app.post('/api/warden/attendance/resolve-alert', (req, res) => {
 
 app.get('/api/warden/dashboard', handleWardenReport);
 app.get('/api/warden/attendance-report', handleWardenReport);
+
+// GET /api/student/photo (Lazy Portrait Lookup for Smart ID Card)
+app.get('/api/student/photo', (req, res) => {
+  try {
+    const roll = String(req.query.roll_number || req.query.student_id || '').trim();
+    if (!roll) {
+      return res.status(400).json({ success: false, error: 'roll_number is required.' });
+    }
+    const row = db.prepare(
+      'SELECT roll_number, face_photo, face_enrolled_at FROM users WHERE UPPER(roll_number) = UPPER(?) OR id = ? LIMIT 1'
+    ).get(roll, roll);
+    if (!row) {
+      return res.status(404).json({ success: false, error: 'Student not found.' });
+    }
+    return res.json({
+      success: true,
+      roll_number: row.roll_number,
+      face_photo: row.face_photo || null,
+      face_enrolled_at: row.face_enrolled_at || null,
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 // GET /api/warden/attendance/weekly-csv (Download All Current Attendance Records as Formatted CSV)
 app.get('/api/warden/attendance/weekly-csv', (req, res) => {

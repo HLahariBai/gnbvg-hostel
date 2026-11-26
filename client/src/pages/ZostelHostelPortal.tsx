@@ -105,6 +105,8 @@ interface StudentUser {
   face_enrolled?: number | boolean;
   face_photo?: string | null;
   facePhoto?: string | null;
+  has_photo?: boolean;
+  has_descriptor?: boolean;
   face_enrolled_at?: string | null;
   face_enroll_attempts?: number;
   streak: number;
@@ -151,6 +153,8 @@ export const isStudentFaceEnrolled = (s?: StudentUser | null): boolean => {
   return Boolean(
     s.faceEnrolled ||
     Number(s.face_enrolled) === 1 ||
+    s.has_photo ||
+    s.has_descriptor ||
     Boolean(s.face_photo) ||
     Boolean(s.facePhoto) ||
     Boolean((s as any).face_descriptor)
@@ -348,6 +352,10 @@ export const ZostelHostelPortal: React.FC = () => {
   const [lastSyncedAt, setLastSyncedAt] = useState<string>('');
   const [isSyncingDashboard, setIsSyncingDashboard] = useState(false);
   const [wardenEnrollFilter, setWardenEnrollFilter] = useState<'ALL' | 'ENROLLED' | 'PENDING'>('ALL');
+  const [studentPhotoCache, setStudentPhotoCache] = useState<Record<string, string>>({});
+  const [residentPage, setResidentPage] = useState(1);
+  const [absentPage, setAbsentPage] = useState(1);
+  const RESIDENTS_PER_PAGE = 50;
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const attendanceVideoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -360,6 +368,26 @@ export const ZostelHostelPortal: React.FC = () => {
     setTimeout(() => {
       setToast(null);
     }, 3800);
+  };
+
+  const fetchStudentPhotoIfNeeded = async (student?: StudentUser | null): Promise<string | null> => {
+    if (!student) return null;
+    const key = String(student.roll_number || student.id || '').trim().toUpperCase();
+    const existing = student.face_photo || student.facePhoto || (key ? studentPhotoCache[key] : null);
+    if (existing) return existing;
+    if (!key || (!isStudentFaceEnrolled(student) && !student.has_photo)) return null;
+    try {
+      const res = await fetch(`/api/student/photo?roll_number=${encodeURIComponent(key)}`, { cache: 'no-store' });
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (data?.success && data.face_photo) {
+        setStudentPhotoCache((prev) => ({ ...prev, [key]: data.face_photo }));
+        return data.face_photo;
+      }
+    } catch {
+      // Non-fatal lazy portrait lookup failure
+    }
+    return null;
   };
 
   // Fetch live stats on mount, filter change, 20s polling & manual sync
@@ -385,6 +413,8 @@ export const ZostelHostelPortal: React.FC = () => {
                 room: s.room || s.room_number || 'A-101',
                 faceEnrolled: enrolled,
                 face_enrolled: enrolled ? 1 : 0,
+                has_photo: Boolean(s.has_photo),
+                has_descriptor: Boolean(s.has_descriptor),
                 face_photo: s.face_photo || s.facePhoto || null,
                 facePhoto: s.face_photo || s.facePhoto || null,
                 face_enrolled_at: s.face_enrolled_at || null,
@@ -528,6 +558,15 @@ export const ZostelHostelPortal: React.FC = () => {
       });
       const data = await res.json();
       if (res.ok && data.success) {
+        const resetKey = String(studentId || '').trim().toUpperCase();
+        if (resetKey) {
+          setStudentPhotoCache((prev) => {
+            if (!prev[resetKey]) return prev;
+            const next = { ...prev };
+            delete next[resetKey];
+            return next;
+          });
+        }
         showToast('Face ID Reset ✓', `Face biometrics for ${studentName} cleared. Re-enrollment unlocked!`);
         // If current logged-in student is this student, reset their state too so they can re-enroll immediately
         if (currentStudent && (currentStudent.id === studentId || currentStudent.roll_number === studentId)) {
@@ -535,6 +574,8 @@ export const ZostelHostelPortal: React.FC = () => {
             ...currentStudent,
             faceEnrolled: false,
             face_enrolled: 0,
+            has_photo: false,
+            has_descriptor: false,
             face_photo: null,
             facePhoto: null,
             face_enroll_attempts: 0,
@@ -567,6 +608,20 @@ export const ZostelHostelPortal: React.FC = () => {
       return () => clearInterval(interval);
     }
   }, [wardenDate, wardenYearFilter, wardenBlockFilter, isWardenAuthenticated, activePortal]);
+
+  useEffect(() => {
+    if (showSmartIdModal) {
+      const target = selectedStudentForIdCard || currentStudent;
+      if (target) {
+        fetchStudentPhotoIfNeeded(target);
+      }
+    }
+  }, [showSmartIdModal, selectedStudentForIdCard?.id, currentStudent?.id]);
+
+  useEffect(() => {
+    setResidentPage(1);
+    setAbsentPage(1);
+  }, [wardenSearch, wardenYearFilter, wardenBlockFilter, wardenEnrollFilter, wardenActiveTab]);
 
   useEffect(() => {
     if (currentStudent) {
@@ -1535,7 +1590,12 @@ export const ZostelHostelPortal: React.FC = () => {
       ctx.fillText('GNBVG SMART HOSTEL ID', 320, 118);
 
       // Avatar Photo or Initials Circle
-      const photoSrc = studentCard.face_photo || studentCard.facePhoto;
+      const rollKey = String(studentCard.roll_number || studentCard.id || '').trim().toUpperCase();
+      const photoSrc =
+        studentCard.face_photo ||
+        studentCard.facePhoto ||
+        (rollKey ? studentPhotoCache[rollKey] : null) ||
+        (await fetchStudentPhotoIfNeeded(studentCard));
       let drewPhoto = false;
       if (photoSrc) {
         try {
@@ -2076,6 +2136,16 @@ export const ZostelHostelPortal: React.FC = () => {
       }
       return 0;
     });
+
+  const totalResidentPages = Math.max(1, Math.ceil(displayedResidents.length / RESIDENTS_PER_PAGE));
+  const safeResidentPage = Math.min(residentPage, totalResidentPages);
+  const residentStartIdx = (safeResidentPage - 1) * RESIDENTS_PER_PAGE;
+  const paginatedResidents = displayedResidents.slice(residentStartIdx, residentStartIdx + RESIDENTS_PER_PAGE);
+
+  const totalAbsentPages = Math.max(1, Math.ceil(absentList.length / RESIDENTS_PER_PAGE));
+  const safeAbsentPage = Math.min(absentPage, totalAbsentPages);
+  const absentStartIdx = (safeAbsentPage - 1) * RESIDENTS_PER_PAGE;
+  const paginatedAbsent = absentList.slice(absentStartIdx, absentStartIdx + RESIDENTS_PER_PAGE);
 
   return (
     <div className="min-h-screen flex flex-col antialiased bg-cream text-slate-800 font-sans selection:bg-coral selection:text-white">
@@ -4190,7 +4260,9 @@ export const ZostelHostelPortal: React.FC = () => {
                           </button>
                         </div>
                         <span className="text-[11px] font-semibold text-slate-500">
-                          Showing {displayedResidents.length} resident(s)
+                          {displayedResidents.length === 0
+                            ? 'Showing 0 residents'
+                            : `Showing ${residentStartIdx + 1}–${residentStartIdx + paginatedResidents.length} of ${displayedResidents.length} resident(s)`}
                         </span>
                       </div>
 
@@ -4207,14 +4279,14 @@ export const ZostelHostelPortal: React.FC = () => {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 text-sm">
-                          {displayedResidents.length === 0 ? (
+                          {paginatedResidents.length === 0 ? (
                             <tr>
                               <td colSpan={7} className="py-10 text-center text-slate-400 text-xs">
                                 No residents found matching your search or filters.
                               </td>
                             </tr>
                           ) : (
-                            displayedResidents.map((student) => {
+                            paginatedResidents.map((student) => {
                               const rec = attendanceRecords.find(
                                 (r) => (r.studentId === student.id || r.id === student.id) && r.date === wardenDate && (r.status === 'Present' || r.status === 'Present (Warden Override)')
                               );
@@ -4222,13 +4294,16 @@ export const ZostelHostelPortal: React.FC = () => {
                                 (o) => (o.studentId === student.id) && o.status === 'Approved' && o.fromDate <= wardenDate && o.toDate >= wardenDate
                               );
                               const isAlert = outOfRangeAlerts.some((a) => a.studentId === student.id || a.roll_number === student.id);
+                              const rollKey = String(student.roll_number || student.id || '').trim().toUpperCase();
+                              const avatarPhoto = student.face_photo || student.facePhoto || (rollKey ? studentPhotoCache[rollKey] : null);
+                              const enrolled = isStudentFaceEnrolled(student);
 
                               return (
                                 <tr key={student.id} className="hover:bg-slate-50/60 transition">
                                   <td className="py-3.5 px-4 font-bold text-slate-900 flex items-center gap-3">
-                                    {(student.face_photo || student.facePhoto) ? (
+                                    {avatarPhoto ? (
                                       <img
-                                        src={student.face_photo || student.facePhoto || ''}
+                                        src={avatarPhoto}
                                         alt={student.name}
                                         className="w-8 h-8 rounded-full object-cover border border-emerald-400 cursor-pointer hover:scale-105 transition shrink-0"
                                         onClick={() => {
@@ -4238,7 +4313,18 @@ export const ZostelHostelPortal: React.FC = () => {
                                         title="Click to view Smart ID Card"
                                       />
                                     ) : (
-                                      <span className="w-8 h-8 rounded-full bg-slate-100 text-slate-700 font-extrabold text-xs flex items-center justify-center shrink-0">
+                                      <span
+                                        onClick={() => {
+                                          setSelectedStudentForIdCard(student);
+                                          setShowSmartIdModal(true);
+                                        }}
+                                        title="Click to view Smart ID Card"
+                                        className={`w-8 h-8 rounded-full font-extrabold text-xs flex items-center justify-center shrink-0 cursor-pointer transition hover:scale-105 ${
+                                          enrolled
+                                            ? 'bg-emerald-50 text-emerald-700 border-2 border-emerald-400'
+                                            : 'bg-slate-100 text-slate-700'
+                                        }`}
+                                      >
                                         {student.name.slice(0, 2).toUpperCase()}
                                       </span>
                                     )}
@@ -4269,7 +4355,7 @@ export const ZostelHostelPortal: React.FC = () => {
                                   <td className="py-3.5 px-4">
                                     {rec ? (
                                       <span className="px-3 py-1 rounded-full text-xs font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1.5 w-fit">
-                                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                                        <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
                                         <span>Present ({rec.timestamp})</span>
                                       </span>
                                     ) : leave ? (
@@ -4289,11 +4375,11 @@ export const ZostelHostelPortal: React.FC = () => {
                                     )}
                                   </td>
                                   <td className="py-3.5 px-4">
-                                    {isStudentFaceEnrolled(student) ? (
+                                    {enrolled ? (
                                       <div className="space-y-1">
                                         <div className="flex items-center gap-2">
                                           <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1 w-fit">
-                                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                                             <span>FRS Enrolled ✓</span>
                                           </span>
                                           <button
@@ -4338,6 +4424,32 @@ export const ZostelHostelPortal: React.FC = () => {
                           )}
                         </tbody>
                       </table>
+
+                      {displayedResidents.length > RESIDENTS_PER_PAGE && (
+                        <div className="mt-4 pt-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3 text-xs">
+                          <span className="font-semibold text-slate-500">
+                            Page {safeResidentPage} of {totalResidentPages} ({displayedResidents.length} total)
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              disabled={safeResidentPage <= 1}
+                              onClick={() => setResidentPage((p) => Math.max(1, p - 1))}
+                              className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold disabled:opacity-40 transition"
+                            >
+                              ← Previous
+                            </button>
+                            <button
+                              type="button"
+                              disabled={safeResidentPage >= totalResidentPages}
+                              onClick={() => setResidentPage((p) => Math.min(totalResidentPages, p + 1))}
+                              className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold disabled:opacity-40 transition"
+                            >
+                              Next →
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -4363,12 +4475,15 @@ export const ZostelHostelPortal: React.FC = () => {
                               </td>
                             </tr>
                           ) : (
-                            presentList.map(({ student, record }) => (
+                            presentList.map(({ student, record }) => {
+                              const rollKey = String(student.roll_number || student.id || '').trim().toUpperCase();
+                              const avatarPhoto = student.face_photo || student.facePhoto || (rollKey ? studentPhotoCache[rollKey] : null);
+                              return (
                               <tr key={record.id} className="hover:bg-teal-50/30 transition">
                                 <td className="py-3.5 px-4 font-bold text-slate-900 flex items-center gap-3">
-                                  {(student.face_photo || student.facePhoto) ? (
+                                  {avatarPhoto ? (
                                     <img
-                                      src={student.face_photo || student.facePhoto || ''}
+                                      src={avatarPhoto}
                                       alt={student.name}
                                       className="w-8 h-8 rounded-full object-cover border border-emerald-400 cursor-pointer hover:scale-105 transition shrink-0"
                                       onClick={() => {
@@ -4378,7 +4493,18 @@ export const ZostelHostelPortal: React.FC = () => {
                                       title="Click to view Smart ID Card"
                                     />
                                   ) : (
-                                    <span className="w-8 h-8 rounded-full bg-tealhostel-light text-tealhostel font-extrabold text-xs flex items-center justify-center shrink-0">
+                                    <span
+                                      onClick={() => {
+                                        setSelectedStudentForIdCard(student);
+                                        setShowSmartIdModal(true);
+                                      }}
+                                      title="Click to view Smart ID Card"
+                                      className={`w-8 h-8 rounded-full font-extrabold text-xs flex items-center justify-center shrink-0 cursor-pointer transition hover:scale-105 ${
+                                        isStudentFaceEnrolled(student)
+                                          ? 'bg-emerald-50 text-emerald-700 border-2 border-emerald-400'
+                                          : 'bg-tealhostel-light text-tealhostel'
+                                      }`}
+                                    >
                                       {student.name.slice(0, 2).toUpperCase()}
                                     </span>
                                   )}
@@ -4424,7 +4550,8 @@ export const ZostelHostelPortal: React.FC = () => {
                                   </div>
                                 </td>
                               </tr>
-                            ))
+                              );
+                            })
                           )}
                         </tbody>
                       </table>
@@ -4521,6 +4648,14 @@ export const ZostelHostelPortal: React.FC = () => {
                   {/* TAB 2: PENDING / ABSENT STUDENTS */}
                   {wardenActiveTab === 'absent' && (
                     <div className="p-6 overflow-x-auto">
+                      <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-100 text-[11px] font-semibold text-slate-500">
+                        <span>Pending Check-In / Absent Residents</span>
+                        <span>
+                          {absentList.length === 0
+                            ? '0 residents'
+                            : `Showing ${absentStartIdx + 1}–${absentStartIdx + paginatedAbsent.length} of ${absentList.length} resident(s)`}
+                        </span>
+                      </div>
                       <table className="w-full text-left border-collapse">
                         <thead>
                           <tr className="border-b border-slate-200 text-[11px] font-extrabold uppercase tracking-wider text-slate-400">
@@ -4534,19 +4669,23 @@ export const ZostelHostelPortal: React.FC = () => {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 text-sm">
-                          {absentList.length === 0 ? (
+                          {paginatedAbsent.length === 0 ? (
                             <tr>
                               <td colSpan={7} className="py-10 text-center text-emerald-600 font-bold text-xs">
                                 Zero absentees! All residents checked in or on approved leave.
                               </td>
                             </tr>
                           ) : (
-                            absentList.map((student) => (
+                            paginatedAbsent.map((student) => {
+                              const rollKey = String(student.roll_number || student.id || '').trim().toUpperCase();
+                              const avatarPhoto = student.face_photo || student.facePhoto || (rollKey ? studentPhotoCache[rollKey] : null);
+                              const enrolled = isStudentFaceEnrolled(student);
+                              return (
                               <tr key={student.id} className="hover:bg-orange-50/40 transition">
                                 <td className="py-3.5 px-4 font-bold text-slate-900 flex items-center gap-3">
-                                  {(student.face_photo || student.facePhoto) ? (
+                                  {avatarPhoto ? (
                                     <img
-                                      src={student.face_photo || student.facePhoto || ''}
+                                      src={avatarPhoto}
                                       alt={student.name}
                                       className="w-8 h-8 rounded-full object-cover border border-emerald-400 cursor-pointer hover:scale-105 transition shrink-0"
                                       onClick={() => {
@@ -4556,7 +4695,18 @@ export const ZostelHostelPortal: React.FC = () => {
                                       title="Click to view Smart ID Card"
                                     />
                                   ) : (
-                                    <span className="w-8 h-8 rounded-full bg-coral-light text-coral font-extrabold text-xs flex items-center justify-center shrink-0">
+                                    <span
+                                      onClick={() => {
+                                        setSelectedStudentForIdCard(student);
+                                        setShowSmartIdModal(true);
+                                      }}
+                                      title="Click to view Smart ID Card"
+                                      className={`w-8 h-8 rounded-full font-extrabold text-xs flex items-center justify-center shrink-0 cursor-pointer transition hover:scale-105 ${
+                                        enrolled
+                                          ? 'bg-emerald-50 text-emerald-700 border-2 border-emerald-400'
+                                          : 'bg-coral-light text-coral'
+                                      }`}
+                                    >
                                       {student.name.slice(0, 2).toUpperCase()}
                                     </span>
                                   )}
@@ -4582,11 +4732,11 @@ export const ZostelHostelPortal: React.FC = () => {
                                   {student.block} • <span className="text-slate-500">{student.room}</span>
                                 </td>
                                 <td className="py-3.5 px-4">
-                                  {isStudentFaceEnrolled(student) ? (
+                                  {enrolled ? (
                                     <div className="space-y-1">
                                       <div className="flex items-center gap-2">
                                         <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1 w-fit">
-                                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                                           <span>FRS Enrolled ✓</span>
                                         </span>
                                         <button
@@ -4625,10 +4775,37 @@ export const ZostelHostelPortal: React.FC = () => {
                                   </button>
                                 </td>
                               </tr>
-                            ))
+                              );
+                            })
                           )}
                         </tbody>
                       </table>
+
+                      {absentList.length > RESIDENTS_PER_PAGE && (
+                        <div className="mt-4 pt-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3 text-xs">
+                          <span className="font-semibold text-slate-500">
+                            Page {safeAbsentPage} of {totalAbsentPages} ({absentList.length} total)
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              disabled={safeAbsentPage <= 1}
+                              onClick={() => setAbsentPage((p) => Math.max(1, p - 1))}
+                              className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold disabled:opacity-40 transition"
+                            >
+                              ← Previous
+                            </button>
+                            <button
+                              type="button"
+                              disabled={safeAbsentPage >= totalAbsentPages}
+                              onClick={() => setAbsentPage((p) => Math.min(totalAbsentPages, p + 1))}
+                              className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold disabled:opacity-40 transition"
+                            >
+                              Next →
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -5161,7 +5338,12 @@ export const ZostelHostelPortal: React.FC = () => {
       {/* HOLOGRAPHIC 3D SMART ID CARD MODAL */}
       {showSmartIdModal && (selectedStudentForIdCard || currentStudent) && (() => {
         const viewingStudent = selectedStudentForIdCard || currentStudent!;
-        const photo = viewingStudent.face_photo || viewingStudent.facePhoto;
+        const viewRollKey = String(viewingStudent.roll_number || viewingStudent.id || '').trim().toUpperCase();
+        const photo =
+          viewingStudent.face_photo ||
+          viewingStudent.facePhoto ||
+          (viewRollKey ? studentPhotoCache[viewRollKey] : null) ||
+          null;
         return (
           <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-md flex items-center justify-center p-4">
             <div

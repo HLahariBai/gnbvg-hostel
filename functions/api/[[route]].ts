@@ -13,26 +13,48 @@ interface Env {
 // -------------------------------------------------------------
 // Helper: Execute SQL via Turso Cloud HTTP Pipeline
 // -------------------------------------------------------------
-async function tursoQuery(env: Env, sql: string, args: any[] = []): Promise<any[]> {
-  const rawUrl = env.TURSO_DATABASE_URL || 'libsql://gnbvg-hostel-hlaharibai.aws-ap-south-1.turso.io';
-  const token = env.TURSO_AUTH_TOKEN || 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3OTU0NTQ1MTgsImlkIjoiMDFhMjA5NmQtMzQwMS03YmI3LTgyMmMtZWFjZGJjODQxMmZhIiwia2lkIjoiX2FYcTJZMVRFdW4zbGVwTVhGS0FBT241blE2X3V3NGo5am9MOVg0M1k0VSIsInJpZCI6IjYyZDI1NWYxLTA1ZmItNDM4Zi05ZWJjLTZmZjZjNDdkZThhNiJ9.i29MHw9Zt9k1P4Q-RQFMOmB6cpYzLq_9SdLG_KuX2HsCOlo2D2UIQGbpEpflw0VSII904ZsxD-pFt4ijUuJyCA';
-
-  let clean = rawUrl.replace(/^libsql:\/\//, 'https://').replace(/^http:\/\//, 'https://').replace(/\/+$/, '');
-  if (!clean.startsWith('https://')) clean = 'https://' + clean;
-  const pipelineUrl = `${clean}/v2/pipeline`;
-
-  const formattedArgs = args.map((a) => {
+function formatTursoArgs(args: any[] = []): any[] {
+  return args.map((a) => {
     if (a === null || a === undefined) return { type: 'null' };
     if (typeof a === 'number') {
       return Number.isInteger(a) ? { type: 'integer', value: String(a) } : { type: 'float', value: a };
     }
     return { type: 'text', value: String(a) };
   });
+}
 
-  const requests = [
-    { type: 'execute', stmt: { sql, args: formattedArgs } },
-    { type: 'close' },
-  ];
+function mapTursoResult(execResult: any): any[] {
+  if (!execResult) return [];
+  const cols: string[] = execResult.cols?.map((c: any) => c.name) || [];
+  const rows: any[][] = execResult.rows || [];
+  const out: any[] = new Array(rows.length);
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const obj: any = {};
+    for (let j = 0; j < cols.length; j++) {
+      obj[cols[j]] = r[j]?.value !== undefined ? r[j].value : null;
+    }
+    out[i] = obj;
+  }
+  return out;
+}
+
+function getTursoEndpoint(env: Env): { pipelineUrl: string; token: string } {
+  const rawUrl = env.TURSO_DATABASE_URL || 'libsql://gnbvg-hostel-hlaharibai.aws-ap-south-1.turso.io';
+  const token = env.TURSO_AUTH_TOKEN || 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3OTU0NTQ1MTgsImlkIjoiMDFhMjA5NmQtMzQwMS03YmI3LTgyMmMtZWFjZGJjODQxMmZhIiwia2lkIjoiX2FYcTJZMVRFdW4zbGVwTVhGS0FBT241blE2X3V3NGo5am9MOVg0M1k0VSIsInJpZCI6IjYyZDI1NWYxLTA1ZmItNDM4Zi05ZWJjLTZmZjZjNDdkZThhNiJ9.i29MHw9Zt9k1P4Q-RQFMOmB6cpYzLq_9SdLG_KuX2HsCOlo2D2UIQGbpEpflw0VSII904ZsxD-pFt4ijUuJyCA';
+
+  let clean = rawUrl.replace(/^libsql:\/\//, 'https://').replace(/^http:\/\//, 'https://').replace(/\/+$/, '');
+  if (!clean.startsWith('https://')) clean = 'https://' + clean;
+  return { pipelineUrl: `${clean}/v2/pipeline`, token };
+}
+
+async function tursoBatch(env: Env, queries: { sql: string; args?: any[] }[]): Promise<any[][]> {
+  const { pipelineUrl, token } = getTursoEndpoint(env);
+  const requests: any[] = queries.map((q) => ({
+    type: 'execute',
+    stmt: { sql: q.sql, args: formatTursoArgs(q.args || []) },
+  }));
+  requests.push({ type: 'close' });
 
   const res = await fetch(pipelineUrl, {
     method: 'POST',
@@ -48,19 +70,16 @@ async function tursoQuery(env: Env, sql: string, args: any[] = []): Promise<any[
   }
 
   const data: any = await res.json();
-  const execResult = data.results?.[0]?.response?.result;
-  if (!execResult) return [];
+  const out: any[][] = [];
+  for (let i = 0; i < queries.length; i++) {
+    out.push(mapTursoResult(data.results?.[i]?.response?.result));
+  }
+  return out;
+}
 
-  const cols = execResult.cols?.map((c: any) => c.name) || [];
-  const rows = execResult.rows || [];
-
-  return rows.map((r: any[]) => {
-    const obj: any = {};
-    cols.forEach((col: string, idx: number) => {
-      obj[col] = r[idx]?.value !== undefined ? r[idx].value : null;
-    });
-    return obj;
-  });
+async function tursoQuery(env: Env, sql: string, args: any[] = []): Promise<any[]> {
+  const results = await tursoBatch(env, [{ sql, args }]);
+  return results[0] || [];
 }
 
 // -------------------------------------------------------------
@@ -637,15 +656,38 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     // 7. GET /api/warden/dashboard (Central Administrative Register)
     if (pathname === '/api/warden/dashboard') {
       const queryDate = url.searchParams.get('date') || todayStr;
-      const allStudentsRaw = await tursoQuery(
-        env,
-        "SELECT id, roll_number, name, email, role, year, block, room_number, face_enrolled, face_photo, face_enrolled_at, face_enroll_attempts, streak, dinner_rsvp, student_phone, father_phone, (face_descriptor IS NOT NULL AND face_descriptor != '') AS has_descriptor FROM users WHERE role = 'student'"
-      );
-      const allStudents = allStudentsRaw.map((s: any) => {
-        const isEnrolled = Number(s.face_enrolled) === 1 || Boolean(s.face_photo) || Number(s.has_descriptor) === 1;
-        return {
-          id: s.roll_number || s.id,
-          roll_number: s.roll_number || s.id,
+      const [allStudentsRaw, attendanceRows, approvedLeaves, allOutpasses, allTickets] = await tursoBatch(env, [
+        {
+          sql: "SELECT id, roll_number, name, email, year, block, room_number, face_enrolled, face_enrolled_at, face_enroll_attempts, streak, dinner_rsvp, student_phone, father_phone, CASE WHEN face_photo IS NOT NULL AND length(face_photo) > 0 THEN 1 ELSE 0 END AS has_photo, CASE WHEN face_descriptor IS NOT NULL AND length(face_descriptor) > 0 THEN 1 ELSE 0 END AS has_descriptor FROM users WHERE role = 'student'",
+        },
+        {
+          sql: 'SELECT id, student_id, roll_number, name, year, block, room_number, date, timestamp, status, is_geofence_breach, gps_distance, face_distance, warden_action FROM attendance WHERE date = ?',
+          args: [queryDate],
+        },
+        {
+          sql: "SELECT id, student_id, roll_number, student_name, year, block, type, from_date, to_date FROM outpasses WHERE status = 'Approved' AND from_date <= ? AND to_date >= ?",
+          args: [queryDate, queryDate],
+        },
+        {
+          sql: 'SELECT * FROM outpasses ORDER BY created_at DESC LIMIT 50',
+        },
+        {
+          sql: 'SELECT * FROM maintenance_tickets ORDER BY created_at DESC LIMIT 50',
+        },
+      ]);
+
+      const allStudents = new Array(allStudentsRaw.length);
+      let enrolledFaceCount = 0;
+      for (let i = 0; i < allStudentsRaw.length; i++) {
+        const s = allStudentsRaw[i];
+        const hasPhoto = Number(s.has_photo) === 1;
+        const hasDescriptor = Number(s.has_descriptor) === 1;
+        const isEnrolled = Number(s.face_enrolled) === 1 || hasPhoto || hasDescriptor;
+        if (isEnrolled) enrolledFaceCount++;
+        const roll = s.roll_number || s.id;
+        allStudents[i] = {
+          id: roll,
+          roll_number: roll,
           name: s.name,
           email: s.email,
           year: formatYearLabel(s.year),
@@ -654,8 +696,10 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           room_number: s.room_number || 'A-101',
           face_enrolled: isEnrolled ? 1 : 0,
           faceEnrolled: isEnrolled,
-          face_photo: s.face_photo || null,
-          facePhoto: s.face_photo || null,
+          has_photo: hasPhoto,
+          has_descriptor: hasDescriptor,
+          face_photo: null,
+          facePhoto: null,
           face_enrolled_at: s.face_enrolled_at || null,
           face_enroll_attempts: Number(s.face_enroll_attempts || 0),
           profileStatus: isEnrolled ? 'FRS Enrolled' : 'Enrollment Pending',
@@ -664,15 +708,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           father_phone: s.father_phone,
           student_phone: s.student_phone,
         };
-      });
-      const attendanceRows = await tursoQuery(env, 'SELECT * FROM attendance WHERE date = ?', [queryDate]);
-      const approvedLeaves = await tursoQuery(
-        env,
-        "SELECT * FROM outpasses WHERE status = 'Approved' AND from_date <= ? AND to_date >= ?",
-        [queryDate, queryDate]
-      );
-      const allOutpasses = await tursoQuery(env, 'SELECT * FROM outpasses ORDER BY created_at DESC LIMIT 50');
-      const allTickets = await tursoQuery(env, 'SELECT * FROM maintenance_tickets ORDER BY created_at DESC LIMIT 50');
+      }
 
       const presentStudents = attendanceRows.map((a) => ({
         id: a.id,
@@ -701,15 +737,18 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
       const presentRolls = new Set(attendanceRows.map((a) => a.roll_number));
       const leaveRolls = new Set(approvedLeaves.map((l) => l.roll_number));
-      const absentStudents = allStudents.filter((s) => !presentRolls.has(s.roll_number) && !leaveRolls.has(s.roll_number));
-      const enrolledFaceCount = allStudents.filter((s) => s.faceEnrolled).length;
+      let absentCount = 0;
+      for (let i = 0; i < allStudents.length; i++) {
+        const roll = allStudents[i].roll_number;
+        if (!presentRolls.has(roll) && !leaveRolls.has(roll)) absentCount++;
+      }
 
       return jsonResponse({
         success: true,
         syncedAt: formatISTDateTime(),
         allStudents,
         presentStudents,
-        absentStudents,
+        absentStudents: [],
         leaveStudents,
         outpasses: allOutpasses,
         tickets: allTickets,
@@ -717,7 +756,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         kpis: {
           totalStudents: allStudents.length,
           presentCount: presentStudents.length,
-          absentCount: absentStudents.length,
+          absentCount,
           leaveCount: leaveStudents.length,
           enrolledFaceCount,
           pendingFaceCount: allStudents.length - enrolledFaceCount,
@@ -725,7 +764,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         stats: {
           total: allStudents.length,
           present: presentStudents.length,
-          absent: absentStudents.length,
+          absent: absentCount,
           leaves: leaveStudents.length,
           enrolledFaceCount,
           percent: Math.round((presentStudents.length / (allStudents.length || 1)) * 100),
@@ -793,6 +832,28 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         success: true,
         message: `Dinner RSVP updated: ${val ? 'Dining in mess' : 'Skipping dinner'}.`,
         dinner_rsvp: val === 1,
+      });
+    }
+
+    // 11c. GET /api/student/photo (Lazy Portrait Lookup for Smart ID Card)
+    if (pathname === '/api/student/photo') {
+      const roll = (url.searchParams.get('roll_number') || url.searchParams.get('student_id') || '').trim();
+      if (!roll) {
+        return jsonResponse({ success: false, error: 'roll_number is required.' }, 400);
+      }
+      const rows = await tursoQuery(
+        env,
+        'SELECT roll_number, face_photo, face_enrolled_at FROM users WHERE UPPER(roll_number) = UPPER(?) OR id = ? LIMIT 1',
+        [roll, roll]
+      );
+      if (rows.length === 0) {
+        return jsonResponse({ success: false, error: 'Student not found.' }, 404);
+      }
+      return jsonResponse({
+        success: true,
+        roll_number: rows[0].roll_number,
+        face_photo: rows[0].face_photo || null,
+        face_enrolled_at: rows[0].face_enrolled_at || null,
       });
     }
 

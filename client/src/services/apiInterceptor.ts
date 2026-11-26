@@ -400,10 +400,12 @@ export function initApiInterceptor() {
         const istToday = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
         const queryDate = parsedUrl.searchParams.get('date') || istToday;
         const allStudentsRaw = await executeTursoQuery(
-          "SELECT id, roll_number, name, email, role, year, block, room_number, face_enrolled, face_photo, face_enrolled_at, face_enroll_attempts, streak, dinner_rsvp, student_phone, father_phone, (face_descriptor IS NOT NULL AND face_descriptor != '') AS has_descriptor FROM users WHERE role = 'student'"
+          "SELECT id, roll_number, name, email, year, block, room_number, face_enrolled, face_enrolled_at, face_enroll_attempts, streak, dinner_rsvp, student_phone, father_phone, CASE WHEN face_photo IS NOT NULL AND length(face_photo) > 0 THEN 1 ELSE 0 END AS has_photo, CASE WHEN face_descriptor IS NOT NULL AND length(face_descriptor) > 0 THEN 1 ELSE 0 END AS has_descriptor FROM users WHERE role = 'student'"
         );
         const allStudents = allStudentsRaw.map((s) => {
-          const isEnrolled = Number(s.face_enrolled) === 1 || Boolean(s.face_photo) || Number(s.has_descriptor) === 1;
+          const hasPhoto = Number(s.has_photo) === 1;
+          const hasDescriptor = Number(s.has_descriptor) === 1;
+          const isEnrolled = Number(s.face_enrolled) === 1 || hasPhoto || hasDescriptor;
           return {
             id: s.roll_number || s.id,
             roll_number: s.roll_number || s.id,
@@ -415,8 +417,10 @@ export function initApiInterceptor() {
             room_number: s.room_number || 'A-101',
             face_enrolled: isEnrolled ? 1 : 0,
             faceEnrolled: isEnrolled,
-            face_photo: s.face_photo || null,
-            facePhoto: s.face_photo || null,
+            has_photo: hasPhoto,
+            has_descriptor: hasDescriptor,
+            face_photo: null,
+            facePhoto: null,
             face_enrolled_at: s.face_enrolled_at || null,
             face_enroll_attempts: Number(s.face_enroll_attempts || 0),
             profileStatus: isEnrolled ? 'FRS Enrolled' : 'Enrollment Pending',
@@ -461,7 +465,7 @@ export function initApiInterceptor() {
 
         const presentRolls = new Set(attendanceRows.map((a) => a.roll_number));
         const leaveRolls = new Set(approvedLeaves.map((l) => l.roll_number));
-        const absentStudents = allStudents.filter((s) => !presentRolls.has(s.roll_number) && !leaveRolls.has(s.roll_number));
+        const absentCount = allStudents.filter((s) => !presentRolls.has(s.roll_number) && !leaveRolls.has(s.roll_number)).length;
         const enrolledFaceCount = allStudents.filter((s) => s.faceEnrolled).length;
 
         return jsonResponse({
@@ -469,7 +473,7 @@ export function initApiInterceptor() {
           syncedAt: formatBridgeISTDateTime(),
           allStudents,
           presentStudents,
-          absentStudents,
+          absentStudents: [],
           leaveStudents,
           outpasses: allOutpasses,
           tickets: allTickets,
@@ -477,7 +481,7 @@ export function initApiInterceptor() {
           kpis: {
             totalStudents: allStudents.length,
             presentCount: presentStudents.length,
-            absentCount: absentStudents.length,
+            absentCount,
             leaveCount: leaveStudents.length,
             enrolledFaceCount,
             pendingFaceCount: allStudents.length - enrolledFaceCount,
@@ -485,11 +489,32 @@ export function initApiInterceptor() {
           stats: {
             total: allStudents.length,
             present: presentStudents.length,
-            absent: absentStudents.length,
+            absent: absentCount,
             leaves: leaveStudents.length,
             enrolledFaceCount,
             percent: Math.round((presentStudents.length / (allStudents.length || 1)) * 100),
           },
+        });
+      }
+
+      // 7b. GET /api/student/photo
+      if (pathname === '/api/student/photo') {
+        const roll = (parsedUrl.searchParams.get('roll_number') || parsedUrl.searchParams.get('student_id') || '').trim();
+        if (!roll) {
+          return jsonResponse({ success: false, error: 'roll_number is required.' }, 400);
+        }
+        const rows = await executeTursoQuery(
+          'SELECT roll_number, face_photo, face_enrolled_at FROM users WHERE UPPER(roll_number) = UPPER(?) OR id = ? LIMIT 1',
+          [roll, roll]
+        );
+        if (rows.length === 0) {
+          return jsonResponse({ success: false, error: 'Student not found.' }, 404);
+        }
+        return jsonResponse({
+          success: true,
+          roll_number: rows[0].roll_number,
+          face_photo: rows[0].face_photo || null,
+          face_enrolled_at: rows[0].face_enrolled_at || null,
         });
       }
 
