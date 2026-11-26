@@ -39,6 +39,7 @@ import {
   RotateCcw,
   Clock,
   FileText,
+  ExternalLink,
 } from 'lucide-react';
 
 declare const confetti: any;
@@ -245,6 +246,18 @@ export const ZostelHostelPortal: React.FC = () => {
   const [geoQ4, setGeoQ4] = useState({ lat: 15.774300528319552, lng: 78.05484117730008 });
   const [geoCenter, setGeoCenter] = useState({ lat: 15.7742985, lng: 78.0547175 });
   const [deviceGpsTest, setDeviceGpsTest] = useState<{ testing: boolean; message: string; success?: boolean } | null>(null);
+
+  // Geofence Strict Enforcement Modal
+  const [geofenceModal, setGeofenceModal] = useState<{
+    isOpen: boolean;
+    distance: number;
+    allowedRadius: number;
+    targetLat: number;
+    targetLng: number;
+    currentLat?: number;
+    currentLng?: number;
+    reason: 'OUT_OF_RANGE' | 'PERMISSION_DENIED' | 'UNAVAILABLE';
+  } | null>(null);
 
   // Attendance, Outpasses, Tickets (Synced with SQLite)
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceItem[]>([]);
@@ -1078,20 +1091,86 @@ export const ZostelHostelPortal: React.FC = () => {
     setIsMarkingFRS(true);
     setFrsStep(1);
 
-    // 1. Mobile GPS Acquisition
-    let latitude = geoCenter.lat;
-    let longitude = geoCenter.lng;
+    // 1. Mobile GPS Acquisition & Strict Geofence Pre-Verification
+    if (typeof window !== 'undefined' && !navigator.geolocation) {
+      setIsMarkingFRS(false);
+      setFrsStep(0);
+      setGeofenceModal({
+        isOpen: true,
+        distance: 0,
+        allowedRadius: geoRadius,
+        targetLat: geoCenter.lat,
+        targetLng: geoCenter.lng,
+        reason: 'UNAVAILABLE',
+      });
+      return;
+    }
+
+    let latitude = 0;
+    let longitude = 0;
     try {
       const pos: GeolocationPosition = await new Promise((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 4000, enableHighAccuracy: true });
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          timeout: 7000,
+          enableHighAccuracy: true,
+          maximumAge: 0,
+        });
       });
       latitude = pos.coords.latitude;
       longitude = pos.coords.longitude;
     } catch {
-      // Use configured center for desktop simulator
+      setIsMarkingFRS(false);
+      setFrsStep(0);
+      setGeofenceModal({
+        isOpen: true,
+        distance: 0,
+        allowedRadius: geoRadius,
+        targetLat: geoCenter.lat,
+        targetLng: geoCenter.lng,
+        reason: 'PERMISSION_DENIED',
+      });
+      showToast(
+        'GPS Location Required',
+        'Please enable high-accuracy GPS/location permission on your device to verify you are inside the hostel.',
+        'error'
+      );
+      return;
     }
 
-    setTimeout(() => setFrsStep(2), 400);
+    // Precise Haversine distance calculation to GNBVG Courtyard Area
+    const dLat = ((geoCenter.lat - latitude) * Math.PI) / 180;
+    const dLon = ((geoCenter.lng - longitude) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos((latitude * Math.PI) / 180) *
+      Math.cos((geoCenter.lat * Math.PI) / 180) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const distMeters = Math.round(6371000 * c);
+
+    if (distMeters > geoRadius) {
+      // 🚫 OUTSIDE GEOFENCE: STOP IMMEDIATELY! CAMERA DOES NOT OPEN!
+      setIsMarkingFRS(false);
+      setFrsStep(0);
+      setGeofenceModal({
+        isOpen: true,
+        distance: distMeters,
+        allowedRadius: geoRadius,
+        targetLat: geoCenter.lat,
+        targetLng: geoCenter.lng,
+        currentLat: latitude,
+        currentLng: longitude,
+        reason: 'OUT_OF_RANGE',
+      });
+      showToast(
+        'Outside Hostel Geofence',
+        `You are ${distMeters}m away from the hostel. FRS is locked. Please walk to the given coordinate area (${geoCenter.lat.toFixed(4)}° N, ${geoCenter.lng.toFixed(4)}° E).`,
+        'error'
+      );
+      return;
+    }
+
+    setTimeout(() => setFrsStep(2), 300);
 
     // 2. Real Face-API Descriptor or matching vector
     let liveDescriptor: number[] | null = null;
@@ -1205,6 +1284,18 @@ export const ZostelHostelPortal: React.FC = () => {
         fetchWardenDashboard();
       } else {
         setFrsStep(0);
+        if (data.isGeofenceBreach) {
+          setGeofenceModal({
+            isOpen: true,
+            distance: data.gpsDistance || distMeters,
+            allowedRadius: data.allowedRadius || geoRadius,
+            targetLat: data.targetCoordinates?.lat || geoCenter.lat,
+            targetLng: data.targetCoordinates?.lng || geoCenter.lng,
+            currentLat: latitude,
+            currentLng: longitude,
+            reason: 'OUT_OF_RANGE',
+          });
+        }
         showToast('Check-in Rejected', data.error || 'Face does not match enrolled template or outside geofence.', 'error');
       }
     } catch (err: any) {
@@ -2708,15 +2799,15 @@ export const ZostelHostelPortal: React.FC = () => {
                           </div>
                           <div>
                             <div className="text-xs font-extrabold text-teal-900">
-                              Block Geo-Fence: {currentStudent.block}
+                              Mandatory Geofence: {currentStudent.block} Block
                             </div>
                             <div className="text-xs text-teal-700 font-mono mt-0.5">
-                              Lat: {geoCenter.lat.toFixed(4)}° N, Lng: {geoCenter.lng.toFixed(4)}° E • Within 14m
+                              Required: {geoCenter.lat.toFixed(4)}° N, {geoCenter.lng.toFixed(4)}° E • Max Perimeter: {geoRadius}m
                             </div>
                           </div>
                         </div>
-                        <span className="px-2.5 py-1 rounded-full bg-white text-tealhostel text-[11px] font-extrabold shadow-sm">
-                          IN RANGE
+                        <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-extrabold border border-emerald-300 shadow-sm shrink-0">
+                          PRECISE GEOFENCE ACTIVE
                         </span>
                       </div>
                     </div>
@@ -4827,6 +4918,132 @@ export const ZostelHostelPortal: React.FC = () => {
             >
               Cancel
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* STRICT GEOFENCE ENFORCEMENT POPUP MODAL */}
+      {geofenceModal && geofenceModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fade-in">
+          <div className="relative w-full max-w-lg bg-white rounded-3xl p-6 sm:p-8 shadow-2xl border-2 border-rose-400 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setGeofenceModal(null)}
+              className="absolute top-4 right-4 p-2 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition"
+              title="Close Alert"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-4 mb-4">
+              <div className="w-14 h-14 rounded-2xl bg-rose-100 text-rose-600 border border-rose-200 flex items-center justify-center shrink-0 shadow-sm">
+                <MapPin className="w-8 h-8 text-rose-600 animate-bounce" />
+              </div>
+              <div>
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold uppercase tracking-wider bg-rose-100 text-rose-800 border border-rose-200">
+                  Geo-Fence Boundary Alert
+                </span>
+                <h3 className="font-display font-extrabold text-xl text-slate-900 mt-1">
+                  {geofenceModal.reason === 'PERMISSION_DENIED'
+                    ? 'GPS Location Access Required'
+                    : geofenceModal.reason === 'UNAVAILABLE'
+                    ? 'Geolocation Not Supported'
+                    : 'FRS Scanner Locked: Outside Geofence'}
+                </h3>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 text-xs sm:text-sm leading-relaxed mb-4">
+              {geofenceModal.reason === 'PERMISSION_DENIED' ? (
+                <p>
+                  Your browser or phone has blocked access to GPS location. Attendance check-in strictly requires physical presence inside GNBVG Hostel. Please enable location permissions in your browser address bar and try again.
+                </p>
+              ) : (
+                <p>
+                  <strong>FRS camera scanner is locked because you are outside the authorized hostel area.</strong> Face recognition cannot be opened from your current position. Please go to the given coordinate area to scan your face.
+                </p>
+              )}
+            </div>
+
+            {/* Coordinate Telemetry Box */}
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3 mb-5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-500 font-semibold flex items-center gap-1.5">
+                  <Navigation className="w-4 h-4 text-coral" />
+                  Required Coordinates:
+                </span>
+                <span className="font-mono font-extrabold text-slate-900">
+                  {geofenceModal.targetLat.toFixed(4)}° N, {geofenceModal.targetLng.toFixed(4)}° E
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-500 font-semibold flex items-center gap-1.5">
+                  <Compass className="w-4 h-4 text-indigo-500" />
+                  Authorized Location:
+                </span>
+                <span className="font-bold text-slate-800">
+                  GNBVG Hostel Campus / Courtyard Area
+                </span>
+              </div>
+
+              {geofenceModal.distance > 0 && (
+                <div className="flex items-center justify-between text-xs border-t border-slate-200 pt-2.5">
+                  <span className="text-slate-500 font-semibold">Your Current Distance:</span>
+                  <span className="font-mono font-black text-rose-600 bg-rose-50 px-2.5 py-0.5 rounded-full border border-rose-200">
+                    {geofenceModal.distance} meters away
+                  </span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between text-xs border-t border-slate-200 pt-2.5">
+                <span className="text-slate-500 font-semibold">Allowed Perimeter:</span>
+                <span className="font-mono font-bold text-emerald-700">
+                  Within {geofenceModal.allowedRadius} meters of coordinate center
+                </span>
+              </div>
+
+              {geofenceModal.currentLat && geofenceModal.currentLng && (
+                <div className="flex items-center justify-between text-[11px] border-t border-slate-200 pt-2.5 text-slate-400">
+                  <span>Detected GPS:</span>
+                  <span className="font-mono">
+                    {geofenceModal.currentLat.toFixed(5)}° N, {geofenceModal.currentLng.toFixed(5)}° E
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setGeofenceModal(null);
+                  runFRSAttendance();
+                }}
+                className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-coral to-orange-600 hover:from-coral-dark hover:to-orange-700 text-white font-display font-extrabold text-sm shadow-lg shadow-coral/25 flex items-center justify-center gap-2 transition"
+              >
+                <RotateCcw className="w-4 h-4" />
+                <span>Re-check My Location & Unlock Scanner</span>
+              </button>
+
+              <a
+                href={`https://www.google.com/maps?q=${geofenceModal.targetLat},${geofenceModal.targetLng}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full py-3 px-4 rounded-2xl border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs flex items-center justify-center gap-2 transition"
+              >
+                <ExternalLink className="w-4 h-4 text-slate-500" />
+                <span>Open Hostel Coordinates in Google Maps ({geofenceModal.targetLat.toFixed(4)}, {geofenceModal.targetLng.toFixed(4)})</span>
+              </a>
+
+              <button
+                type="button"
+                onClick={() => setGeofenceModal(null)}
+                className="w-full py-2 text-xs font-bold text-slate-400 hover:text-slate-600 text-center transition"
+              >
+                Dismiss
+              </button>
+            </div>
           </div>
         </div>
       )}

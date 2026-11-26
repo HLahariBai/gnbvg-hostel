@@ -1123,17 +1123,28 @@ function handleMarkAttendance(req, res) {
     if (typeof latitude === 'number' && typeof longitude === 'number' && !isNaN(latitude) && !isNaN(longitude)) {
       gpsDistance = calculateHaversineDistanceMeters(latitude, longitude, blockLat, blockLng);
     } else {
-      gpsDistance = 0;
+      return res.status(400).json({
+        success: false,
+        error: 'GPS location coordinates are required. FRS attendance cannot be recorded without GPS verification.',
+      });
     }
 
     const isGeofenceBreach = gpsDistance > allowedRadius;
-    const recordStatus = isGeofenceBreach ? 'FLAGGED_OUT_OF_RANGE' : 'Present';
 
     if (isGeofenceBreach) {
-      console.log(`[SILENT WARDEN ALERT TRIGGERED] ${student.roll_number} (${student.name}) is ${Math.round(gpsDistance)}m away from ${blockName} (Allowed: ${allowedRadius}m). Status: FLAGGED_OUT_OF_RANGE.`);
-    } else {
-      console.log(`[GEOFENCE VERIFIED] ${student.roll_number} (${student.name}) is within ${Math.round(gpsDistance)}m of ${blockName} (Allowed: ${allowedRadius}m). Status: Present.`);
+      console.log(`[GEOFENCE REJECTION] ${student.roll_number} (${student.name}) rejected: ${Math.round(gpsDistance)}m away from ${blockName} (Allowed: ${allowedRadius}m).`);
+      return res.status(403).json({
+        success: false,
+        isGeofenceBreach: true,
+        gpsDistance: Math.round(gpsDistance),
+        allowedRadius,
+        error: `Geofence Violation: You are ${Math.round(gpsDistance)}m away from ${blockName} Block. FRS attendance rejected. Please go to the given coordinate area (${blockLat.toFixed(4)}° N, ${blockLng.toFixed(4)}° E) to scan your face.`,
+        targetCoordinates: { lat: blockLat, lng: blockLng },
+      });
     }
+
+    console.log(`[GEOFENCE VERIFIED] ${student.roll_number} (${student.name}) is within ${Math.round(gpsDistance)}m of ${blockName} (Allowed: ${allowedRadius}m). Status: Present.`);
+    const recordStatus = 'Present';
 
     // Duplicate detection: If student marks attendance 2-3 times today, detect duplicate and keep only 1 record
     const existing = db.prepare(`

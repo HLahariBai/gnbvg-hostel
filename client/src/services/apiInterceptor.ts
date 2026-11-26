@@ -152,6 +152,38 @@ export function initApiInterceptor() {
           return jsonResponse({ success: false, error: 'Student not found.' }, 404);
         }
 
+        const centerLat = 15.7743;
+        const centerLng = 78.0547;
+        const allowedRadius = 100.0;
+        let gpsDistance = 0;
+        if (typeof latitude === 'number' && typeof longitude === 'number' && !isNaN(latitude) && !isNaN(longitude)) {
+          const dLat = ((centerLat - latitude) * Math.PI) / 180;
+          const dLon = ((centerLng - longitude) * Math.PI) / 180;
+          const a =
+            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos((latitude * Math.PI) / 180) *
+            Math.cos((centerLat * Math.PI) / 180) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2);
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+          gpsDistance = Math.round(6371000 * c);
+        } else {
+          return jsonResponse({
+            success: false,
+            error: 'GPS location coordinates are required. FRS attendance cannot be recorded without GPS verification.',
+          }, 400);
+        }
+
+        if (gpsDistance > allowedRadius) {
+          return jsonResponse({
+            success: false,
+            isGeofenceBreach: true,
+            gpsDistance,
+            allowedRadius,
+            error: `Geofence Violation: You are ${gpsDistance}m away from GNBVG Hostel. FRS attendance rejected. Please go to the given coordinate area (15.7743° N, 78.0547° E) to scan your face.`,
+            targetCoordinates: { lat: centerLat, lng: centerLng },
+          }, 403);
+        }
+
         const existingRows = await executeTursoQuery(
           'SELECT * FROM attendance WHERE UPPER(roll_number) = ? AND date = ?',
           [targetRoll, todayStr]

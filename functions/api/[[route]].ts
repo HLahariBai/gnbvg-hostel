@@ -323,9 +323,25 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       let gpsDistance = 0;
       if (typeof latitude === 'number' && typeof longitude === 'number' && !isNaN(latitude) && !isNaN(longitude)) {
         gpsDistance = calculateHaversineDistanceMeters(latitude, longitude, 15.7743, 78.0547);
+      } else {
+        return jsonResponse({
+          success: false,
+          error: 'GPS location coordinates are required. FRS attendance cannot be recorded without high-accuracy GPS verification.',
+        }, 400);
       }
-      const isGeofenceBreach = gpsDistance > allowedRadiusMeters;
-      const recordStatus = isGeofenceBreach ? 'FLAGGED_OUT_OF_RANGE' : 'Present';
+
+      if (gpsDistance > allowedRadiusMeters) {
+        return jsonResponse({
+          success: false,
+          isGeofenceBreach: true,
+          gpsDistance: Math.round(gpsDistance),
+          allowedRadius: allowedRadiusMeters,
+          error: `Geofence Violation: You are ${Math.round(gpsDistance)}m away from GNBVG Hostel. FRS attendance rejected. Please go to the given coordinate area (15.7743° N, 78.0547° E) to scan your face.`,
+          targetCoordinates: { lat: 15.7743, lng: 78.0547 },
+        }, 403);
+      }
+
+      const recordStatus = 'Present';
 
       // Step E: Strict Duplicate Check: If already marked today, retain single record
       const existingRows = await tursoQuery(
