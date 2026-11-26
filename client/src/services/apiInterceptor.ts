@@ -74,6 +74,7 @@ export function initApiInterceptor() {
             face_photo: student.face_photo || null,
             facePhoto: student.face_photo || null,
             streak: Number(student.streak || 1),
+            dinnerRsvp: student.dinner_rsvp === undefined || student.dinner_rsvp === null ? true : Number(student.dinner_rsvp) === 1,
           },
         });
       }
@@ -302,6 +303,22 @@ export function initApiInterceptor() {
           [id, body.student_id, body.roll_number, body.name, body.block, body.room_number, body.category, body.description, 'Open']
         );
         return jsonResponse({ success: true, message: 'Helpdesk ticket raised successfully!' });
+      }
+
+      // 9b. POST /api/student/dinner-rsvp
+      if (pathname === '/api/student/dinner-rsvp' && method === 'POST') {
+        const roll = String(body.roll_number || '').trim();
+        const sId = String(body.student_id || '').trim();
+        const val = body.dinner_rsvp ? 1 : 0;
+        await executeTursoQuery(
+          'UPDATE users SET dinner_rsvp = ? WHERE UPPER(roll_number) = UPPER(?) OR id = ?',
+          [val, roll, sId]
+        );
+        return jsonResponse({
+          success: true,
+          message: `Dinner RSVP updated: ${val ? 'Dining in mess' : 'Skipping dinner'}.`,
+          dinner_rsvp: val === 1,
+        });
       }
 
       // 10. POST /api/warden/students/reset-face

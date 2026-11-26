@@ -40,9 +40,44 @@ import {
   Clock,
   FileText,
   ExternalLink,
+  Flame,
+  Palette,
+  Radio,
 } from 'lucide-react';
+import StudentFunHub from '../components/StudentFunHub';
+import { fireFestiveConfetti, playPopSound, playSuccessChime } from '../utils/celebration';
 
-declare const confetti: any;
+type ThemePresetKey = 'aurora' | 'sunset' | 'ocean' | 'berry';
+
+const THEME_PRESETS: Record<
+  ThemePresetKey,
+  {
+    name: string;
+    bannerClass: string;
+    dotClass: string;
+  }
+> = {
+  aurora: {
+    name: 'Aurora Violet',
+    bannerClass: 'from-indigo-950 via-purple-900 to-teal-900',
+    dotClass: 'from-indigo-500 to-purple-500',
+  },
+  sunset: {
+    name: 'Sunset Coral',
+    bannerClass: 'from-rose-700 via-coral to-amber-600',
+    dotClass: 'from-rose-500 to-amber-400',
+  },
+  ocean: {
+    name: 'Cyber Ocean',
+    bannerClass: 'from-slate-900 via-cyan-800 to-emerald-800',
+    dotClass: 'from-cyan-400 to-emerald-500',
+  },
+  berry: {
+    name: 'Neon Berry',
+    bannerClass: 'from-fuchsia-900 via-pink-700 to-orange-600',
+    dotClass: 'from-fuchsia-500 to-pink-500',
+  },
+};
 
 interface BlockInfo {
   id: string;
@@ -291,6 +326,24 @@ export const ZostelHostelPortal: React.FC = () => {
   const [selectedStudentForIdCard, setSelectedStudentForIdCard] = useState<StudentUser | null>(null);
   const [frsStep, setFrsStep] = useState<number>(0);
   const [isMarkingFRS, setIsMarkingFRS] = useState(false);
+  const [dashboardTheme, setDashboardTheme] = useState<ThemePresetKey>(() => {
+    try {
+      const saved = localStorage.getItem('gnbvg_theme') as ThemePresetKey | null;
+      return saved && THEME_PRESETS[saved] ? saved : 'aurora';
+    } catch {
+      return 'aurora';
+    }
+  });
+  const [isUpdatingRsvp, setIsUpdatingRsvp] = useState(false);
+  const [studentGpsPing, setStudentGpsPing] = useState<{
+    checking: boolean;
+    distance?: number;
+    inside?: boolean;
+    lat?: number;
+    lng?: number;
+    error?: string;
+  } | null>(null);
+  const [idCardTilt, setIdCardTilt] = useState<{ rx: number; ry: number }>({ rx: 0, ry: 0 });
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const attendanceVideoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -1267,9 +1320,8 @@ export const ZostelHostelPortal: React.FC = () => {
           setStudents(students.map((s) => (s.id === updatedStudent.id ? updatedStudent : s)));
         }
 
-        if (typeof confetti === 'function') {
-          confetti({ particleCount: 80, spread: 70, origin: { y: 0.65 } });
-        }
+        fireFestiveConfetti('full');
+        playSuccessChime();
 
         if (data.isUpdate) {
           showToast('Best Record Updated! 🌟', data.message || 'Updated to your best biometric match today.');
@@ -1303,6 +1355,246 @@ export const ZostelHostelPortal: React.FC = () => {
       showToast('Network Error', 'Could not reach hostel attendance server.', 'error');
     } finally {
       setIsMarkingFRS(false);
+    }
+  };
+
+  // Interactive Helpers: Theme Switch, Mess Dinner RSVP, Live GPS Ping, Holographic PNG Download
+  const handleChangeTheme = (themeKey: ThemePresetKey) => {
+    setDashboardTheme(themeKey);
+    try {
+      localStorage.setItem('gnbvg_theme', themeKey);
+    } catch {}
+    playPopSound();
+    showToast('Theme Applied ✨', `Switched dashboard vibe to ${THEME_PRESETS[themeKey].name}!`);
+  };
+
+  const handleToggleDinnerRsvp = async (nextVal: boolean) => {
+    if (!currentStudent) return;
+    setIsUpdatingRsvp(true);
+    try {
+      const res = await fetch('/api/student/dinner-rsvp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          student_id: currentStudent.id,
+          roll_number: currentStudent.roll_number || currentStudent.id,
+          dinner_rsvp: nextVal,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        const updated = { ...currentStudent, dinnerRsvp: nextVal };
+        setCurrentStudent(updated);
+        setStudents((prev) => prev.map((s) => (s.id === updated.id ? { ...s, dinnerRsvp: nextVal } : s)));
+        playPopSound();
+        if (nextVal) {
+          fireFestiveConfetti('mini');
+        }
+        showToast(
+          nextVal ? '🍛 Dining in Mess Tonight!' : '🥡 Dinner Skipped',
+          nextVal
+            ? 'Your hot mess plate is reserved! Thanks for helping reduce food waste.'
+            : 'Mess team notified for tonight. Take care!'
+        );
+      } else {
+        showToast('Update Failed', data.error || 'Could not save mess RSVP.', 'error');
+      }
+    } catch {
+      showToast('Network Error', 'Unable to update mess RSVP right now.', 'error');
+    } finally {
+      setIsUpdatingRsvp(false);
+    }
+  };
+
+  const handlePingStudentGps = () => {
+    if (typeof window === 'undefined' || !navigator.geolocation) {
+      setStudentGpsPing({ checking: false, error: 'Geolocation unavailable on this device.' });
+      return;
+    }
+    setStudentGpsPing({ checking: true });
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude, longitude } = pos.coords;
+        const dLat = ((geoCenter.lat - latitude) * Math.PI) / 180;
+        const dLon = ((geoCenter.lng - longitude) * Math.PI) / 180;
+        const a =
+          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos((latitude * Math.PI) / 180) *
+            Math.cos((geoCenter.lat * Math.PI) / 180) *
+            Math.sin(dLon / 2) *
+            Math.sin(dLon / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        const distance = Math.round(6371000 * c);
+        const inside = distance <= geoRadius;
+        setStudentGpsPing({ checking: false, distance, inside, lat: latitude, lng: longitude });
+        playPopSound();
+        showToast(
+          inside ? '🟢 Inside Hostel Perimeter!' : '🔴 Outside Hostel Perimeter',
+          inside
+            ? `GPS verified ${distance}m from GNBVG courtyard (Allowed: ${geoRadius}m). Camera scanner ready!`
+            : `You are ${distance}m away. Walk inside ${geoRadius}m of ${geoCenter.lat.toFixed(4)}° N, ${geoCenter.lng.toFixed(4)}° E.`,
+          inside ? 'success' : 'warning'
+        );
+      },
+      () => {
+        setStudentGpsPing({ checking: false, error: 'Location permission denied or GPS off.' });
+        showToast('GPS Permission Needed', 'Please allow browser location access to ping your distance.', 'warning');
+      },
+      { enableHighAccuracy: true, timeout: 6000, maximumAge: 0 }
+    );
+  };
+
+  const handleDownloadSmartIdCard = async (studentCard: StudentUser) => {
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = 640;
+      canvas.height = 920;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      // Background
+      const bgGrad = ctx.createLinearGradient(0, 0, 640, 920);
+      bgGrad.addColorStop(0, '#FFFDF9');
+      bgGrad.addColorStop(1, '#FFF1EB');
+      ctx.fillStyle = bgGrad;
+      ctx.fillRect(0, 0, 640, 920);
+
+      // Top Header Gradient
+      const hdrGrad = ctx.createLinearGradient(0, 0, 640, 175);
+      hdrGrad.addColorStop(0, '#1e1b4b');
+      hdrGrad.addColorStop(0.5, '#581c87');
+      hdrGrad.addColorStop(1, '#0f766e');
+      ctx.fillStyle = hdrGrad;
+      ctx.fillRect(0, 0, 640, 175);
+
+      // Rainbow Accent Strip
+      const stripeGrad = ctx.createLinearGradient(0, 175, 640, 175);
+      stripeGrad.addColorStop(0, '#FF5A36');
+      stripeGrad.addColorStop(0.5, '#F59E0B');
+      stripeGrad.addColorStop(1, '#06B6D4');
+      ctx.fillStyle = stripeGrad;
+      ctx.fillRect(0, 172, 640, 8);
+
+      ctx.fillStyle = '#FCD34D';
+      ctx.font = 'bold 18px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('G. PULLA REDDY ENGINEERING COLLEGE • KURNOOL', 320, 68);
+
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '800 32px sans-serif';
+      ctx.fillText('GNBVG SMART HOSTEL ID', 320, 118);
+
+      // Avatar Photo or Initials Circle
+      const photoSrc = studentCard.face_photo || studentCard.facePhoto;
+      let drewPhoto = false;
+      if (photoSrc) {
+        try {
+          const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+            const el = new Image();
+            el.crossOrigin = 'anonymous';
+            el.onload = () => resolve(el);
+            el.onerror = reject;
+            el.src = photoSrc;
+          });
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(320, 300, 96, 0, Math.PI * 2);
+          ctx.clip();
+          ctx.drawImage(img, 224, 204, 192, 192);
+          ctx.restore();
+          ctx.lineWidth = 6;
+          ctx.strokeStyle = '#10B981';
+          ctx.beginPath();
+          ctx.arc(320, 300, 96, 0, Math.PI * 2);
+          ctx.stroke();
+          drewPhoto = true;
+        } catch {
+          drewPhoto = false;
+        }
+      }
+
+      if (!drewPhoto) {
+        const avGrad = ctx.createLinearGradient(224, 204, 416, 396);
+        avGrad.addColorStop(0, '#FF5A36');
+        avGrad.addColorStop(1, '#F59E0B');
+        ctx.fillStyle = avGrad;
+        ctx.beginPath();
+        ctx.arc(320, 300, 96, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 56px sans-serif';
+        const initials = studentCard.name
+          .split(' ')
+          .map((n) => n[0])
+          .join('')
+          .slice(0, 2)
+          .toUpperCase();
+        ctx.fillText(initials, 320, 320);
+      }
+
+      // Name & Roll Number
+      ctx.fillStyle = '#0F172A';
+      ctx.font = '800 30px sans-serif';
+      ctx.fillText(studentCard.name.slice(0, 26), 320, 452);
+
+      ctx.fillStyle = '#FF5A36';
+      ctx.font = 'bold 22px monospace';
+      ctx.fillText(studentCard.roll_number || studentCard.id, 320, 492);
+
+      // Detail Card Box
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(48, 526, 544, 120);
+      ctx.strokeStyle = '#FED7AA';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(48, 526, 544, 120);
+
+      const cols = [
+        { label: 'YEAR', value: studentCard.year || 'N/A', x: 140 },
+        { label: 'BLOCK', value: studentCard.block || 'N/A', x: 320 },
+        { label: 'ROOM', value: studentCard.room || 'N/A', x: 500 },
+      ];
+      cols.forEach((c) => {
+        ctx.fillStyle = '#94A3B8';
+        ctx.font = 'bold 14px sans-serif';
+        ctx.fillText(c.label, c.x, 566);
+        ctx.fillStyle = '#1E293B';
+        ctx.font = '800 22px sans-serif';
+        ctx.fillText(c.value, c.x, 608);
+      });
+
+      // Verified Biometric & Streak Pills
+      const enrolled = isStudentFaceEnrolled(studentCard);
+      ctx.fillStyle = enrolled ? '#D1FAE5' : '#FEF3C7';
+      ctx.fillRect(110, 676, 420, 48);
+      ctx.fillStyle = enrolled ? '#047857' : '#B45309';
+      ctx.font = '800 20px sans-serif';
+      ctx.fillText(enrolled ? '✓ FRS BIOMETRIC ACTIVE • VERIFIED' : '⚠ FACE ENROLLMENT PENDING', 320, 707);
+
+      ctx.fillStyle = '#475569';
+      ctx.font = 'bold 18px sans-serif';
+      ctx.fillText(`🔥 Active Streak: ${studentCard.streak || 0} Days`, 320, 768);
+
+      // Decorative QR Grid
+      const qrSeed = (studentCard.roll_number || studentCard.id || 'GNBVG').split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+      ctx.fillStyle = '#0F172A';
+      for (let r = 0; r < 5; r++) {
+        for (let c = 0; c < 5; c++) {
+          if ((r + c + qrSeed) % 2 === 0 || (r === 0 && c === 0) || (r === 4 && c === 4)) {
+            ctx.fillRect(265 + c * 22, 795 + r * 20, 18, 16);
+          }
+        }
+      }
+
+      const link = document.createElement('a');
+      link.download = `GNBVG_Smart_ID_${studentCard.roll_number || studentCard.id}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+
+      playPopSound();
+      fireFestiveConfetti('mini');
+      showToast('Smart ID Downloaded! 🪪', `Saved GNBVG_Smart_ID_${studentCard.roll_number || studentCard.id}.png`);
+    } catch {
+      showToast('Download Note', 'Could not export Smart ID PNG on this browser.', 'warning');
     }
   };
 
@@ -1742,7 +2034,7 @@ export const ZostelHostelPortal: React.FC = () => {
       )}
 
       {/* 1. TOP LIVE HOSTEL PULSE TICKER */}
-      <div className="bg-slate-900 text-white py-2 overflow-hidden border-b border-slate-800 select-none">
+      <div className="bg-gradient-to-r from-indigo-950 via-purple-950 to-teal-950 text-white py-2 overflow-hidden border-b border-indigo-800/60 select-none">
         <div className="flex whitespace-nowrap animate-marquee items-center gap-8 text-xs sm:text-sm font-medium tracking-wide">
           <span className={`inline-flex items-center gap-2 font-semibold ${windowStatus.isOpen ? 'text-emerald-400' : 'text-amber-400'}`}>
             <span className={`w-2 h-2 rounded-full ${windowStatus.isOpen ? 'bg-emerald-400 animate-ping' : 'bg-amber-400'}`} />
@@ -1864,23 +2156,24 @@ export const ZostelHostelPortal: React.FC = () => {
         </div>
       </header>
 
-      {/* 3. VIBRANT ZOSTEL-STYLE HERO BANNER WITH REAL CAMPUS PHOTOS */}
-      <section className="relative overflow-hidden bg-gradient-to-br from-[#FFF4EC] via-[#FFFDF9] to-[#ECFDF5] border-b border-orange-100">
-        <div className="absolute -top-24 -left-24 w-80 h-80 bg-coral/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute top-10 right-0 w-96 h-96 bg-tealhostel/10 rounded-full blur-3xl pointer-events-none" />
+      {/* 3. VIBRANT AURORA HERO BANNER WITH REAL CAMPUS PHOTOS */}
+      <section className="relative overflow-hidden aurora-hero-bg border-b border-orange-100">
+        <div className="absolute -top-24 -left-24 w-80 h-80 bg-coral/20 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute top-6 right-1/3 w-72 h-72 bg-fuchsia-400/15 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute top-10 right-0 w-96 h-96 bg-cyan-400/15 rounded-full blur-3xl pointer-events-none" />
 
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
             {/* Left Hero Copy */}
             <div className="lg:col-span-7 space-y-5">
-              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white border border-orange-200 shadow-sm text-xs font-bold text-slate-700">
-                <span className="w-2.5 h-2.5 rounded-full bg-tealhostel animate-pulse" />
-                <span>Smart Campus Living • Kurnool, Andhra Pradesh</span>
+              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/90 backdrop-blur-sm border border-purple-200 shadow-sm text-xs font-bold text-slate-700">
+                <span className="w-2.5 h-2.5 rounded-full bg-gradient-to-r from-coral to-fuchsia-500 animate-pulse" />
+                <span>Smart Campus Living • Kurnool, Andhra Pradesh ✨</span>
               </div>
 
               <h1 className="font-display font-extrabold text-3xl sm:text-4xl lg:text-5xl text-slate-900 leading-[1.15] tracking-tight">
                 G. Narayanamma <br />
-                <span className="text-transparent bg-clip-text bg-gradient-to-r from-coral via-orange-500 to-amber-500">
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-coral via-pink-500 to-violet-600 animate-gradient-x">
                   Balikala Vasathi Gruham
                 </span>
               </h1>
@@ -1894,8 +2187,8 @@ export const ZostelHostelPortal: React.FC = () => {
 
               {/* Stats Pills */}
               <div className="flex flex-wrap items-center gap-3 pt-1">
-                <div className="flex items-center gap-2.5 bg-white px-4 py-2.5 rounded-2xl border border-slate-200/80 shadow-sm">
-                  <div className="w-9 h-9 rounded-xl bg-coral-light text-coral flex items-center justify-center font-bold">
+                <div className="flex items-center gap-2.5 bg-white/95 px-4 py-2.5 rounded-2xl border border-coral/20 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition">
+                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-coral to-amber-500 text-white flex items-center justify-center font-bold shadow-xs">
                     <Building2 className="w-5 h-5" />
                   </div>
                   <div>
@@ -1904,18 +2197,18 @@ export const ZostelHostelPortal: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2.5 bg-white px-4 py-2.5 rounded-2xl border border-slate-200/80 shadow-sm">
-                  <div className="w-9 h-9 rounded-xl bg-tealhostel-light text-tealhostel flex items-center justify-center font-bold">
+                <div className="flex items-center gap-2.5 bg-white/95 px-4 py-2.5 rounded-2xl border border-teal-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition">
+                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-tealhostel to-cyan-500 text-white flex items-center justify-center font-bold shadow-xs">
                     <MapPin className="w-5 h-5" />
                   </div>
                   <div>
                     <div className="text-[10px] text-slate-400 font-semibold uppercase">Geo-Fence Accuracy</div>
-                    <div className="text-sm font-extrabold text-slate-800">50m Perimeter</div>
+                    <div className="text-sm font-extrabold text-slate-800">{geoRadius}m Perimeter</div>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2.5 bg-white px-4 py-2.5 rounded-2xl border border-slate-200/80 shadow-sm">
-                  <div className="w-9 h-9 rounded-xl bg-amberwarm-light text-amber-600 flex items-center justify-center font-bold">
+                <div className="flex items-center gap-2.5 bg-white/95 px-4 py-2.5 rounded-2xl border border-violet-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition">
+                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white flex items-center justify-center font-bold shadow-xs">
                     <Camera className="w-5 h-5" />
                   </div>
                   <div>
@@ -2043,11 +2336,16 @@ export const ZostelHostelPortal: React.FC = () => {
               <div className="bg-white rounded-3xl shadow-xl shadow-orange-900/5 border border-orange-100 overflow-hidden">
                 <div className="grid grid-cols-1 lg:grid-cols-12">
                   {/* Left Info Column */}
-                  <div className="lg:col-span-5 bg-gradient-to-br from-coral via-orange-500 to-amber-500 p-8 sm:p-10 text-white flex flex-col justify-between">
-                    <div className="space-y-4">
-                      <span className="inline-block px-3 py-1 rounded-full bg-white/20 backdrop-blur-sm text-xs font-bold uppercase tracking-wider">
-                        Student Self-Service
-                      </span>
+                  <div className="lg:col-span-5 bg-gradient-to-br from-coral via-rose-500 to-violet-600 p-8 sm:p-10 text-white flex flex-col justify-between relative overflow-hidden">
+                    <div className="space-y-4 relative z-10">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="inline-block px-3 py-1 rounded-full bg-white/20 backdrop-blur-sm text-xs font-bold uppercase tracking-wider">
+                          Student Self-Service
+                        </span>
+                        <span className="inline-block px-3 py-1 rounded-full bg-amber-400/25 border border-amber-200/40 text-amber-100 text-[11px] font-extrabold">
+                          🔥 Streaks • 🏅 Badges • ✨ Holographic ID
+                        </span>
+                      </div>
                       <h3 className="font-display font-extrabold text-2xl sm:text-3xl leading-tight">
                         Your Smart Hostel Check-In Starts Here
                       </h3>
@@ -2376,9 +2674,12 @@ export const ZostelHostelPortal: React.FC = () => {
               /* LOGGED-IN STUDENT DASHBOARD */
               <div className="space-y-8">
                 {/* Profile & Streak Header */}
-                <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-teal-950 rounded-3xl p-6 sm:p-8 text-white shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
-                  <div className="flex items-center gap-4 sm:gap-5">
-                    <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-3xl bg-gradient-to-br from-coral to-amber-500 flex items-center justify-center font-display font-extrabold text-2xl sm:text-3xl text-white shadow-lg flex-shrink-0 overflow-hidden border-2 border-white/20">
+                <div className={`relative overflow-hidden bg-gradient-to-r ${THEME_PRESETS[dashboardTheme].bannerClass} rounded-3xl p-6 sm:p-8 text-white shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6 transition-all duration-500`}>
+                  <div className="absolute -top-20 -right-20 w-64 h-64 bg-white/10 rounded-full blur-3xl pointer-events-none" />
+                  <div className="absolute -bottom-24 left-1/3 w-64 h-64 bg-coral/20 rounded-full blur-3xl pointer-events-none" />
+
+                  <div className="flex items-center gap-4 sm:gap-5 relative z-10">
+                    <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-3xl bg-gradient-to-br from-coral via-pink-500 to-amber-500 flex items-center justify-center font-display font-extrabold text-2xl sm:text-3xl text-white shadow-lg flex-shrink-0 overflow-hidden border-2 border-white/30">
                       {(currentStudent.face_photo || currentStudent.facePhoto) ? (
                         <img
                           src={currentStudent.face_photo || currentStudent.facePhoto || ''}
@@ -2406,17 +2707,39 @@ export const ZostelHostelPortal: React.FC = () => {
                         >
                           {isStudentFaceEnrolled(currentStudent) ? '✓ Face Enrolled & Verified' : 'Face Enrollment Pending'}
                         </span>
+                        <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-orange-500/25 text-amber-200 border border-orange-300/40 inline-flex items-center gap-1">
+                          <Flame className="w-3.5 h-3.5 text-amber-300 fill-amber-400 flame-flicker" />
+                          <span>{currentStudent.streak || 0}d Streak</span>
+                        </span>
                       </div>
-                      <p className="text-slate-300 text-xs sm:text-sm font-medium">
+                      <p className="text-slate-200 text-xs sm:text-sm font-medium">
                         {currentStudent.id} • {currentStudent.year} • {currentStudent.block} • Room {currentStudent.room}
                       </p>
-                      <p className="text-teal-300 text-xs font-mono">{currentStudent.email}</p>
+                      <div className="flex flex-wrap items-center gap-3 pt-0.5">
+                        <p className="text-teal-200 text-xs font-mono">{currentStudent.email}</p>
+                        {/* Theme Color Vibe Switcher */}
+                        <div className="inline-flex items-center gap-1.5 bg-white/15 backdrop-blur-md px-2.5 py-1 rounded-full border border-white/15">
+                          <Palette className="w-3 h-3 text-white/80" />
+                          <span className="text-[10px] font-bold text-white/85 uppercase tracking-wider mr-0.5">Vibe</span>
+                          {(Object.keys(THEME_PRESETS) as ThemePresetKey[]).map((key) => (
+                            <button
+                              key={key}
+                              type="button"
+                              onClick={() => handleChangeTheme(key)}
+                              title={`Switch theme to ${THEME_PRESETS[key].name}`}
+                              className={`w-4 h-4 rounded-full bg-gradient-to-br ${THEME_PRESETS[key].dotClass} transition transform hover:scale-125 ${
+                                dashboardTheme === key ? 'ring-2 ring-white scale-110' : 'opacity-75 hover:opacity-100'
+                              }`}
+                            />
+                          ))}
+                        </div>
+                      </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-4 self-end md:self-center">
+                  <div className="flex flex-wrap items-center gap-3 self-end md:self-center relative z-10">
                     {/* Daily Attendance Status (Percentage hidden until cycle logs reviewed & cleared by warden) */}
-                    <div className="flex items-center gap-3 bg-white/10 backdrop-blur-md px-4 py-3 rounded-2xl border border-white/10 shadow-sm">
+                    <div className="flex items-center gap-3 bg-white/10 backdrop-blur-md px-4 py-3 rounded-2xl border border-white/15 shadow-sm">
                       <div className="w-12 h-12 rounded-2xl flex items-center justify-center bg-white/15 text-white shrink-0">
                         {todayAttendanceStatus?.status?.includes('Present') ? (
                           <CheckCircle2 className="w-7 h-7 text-emerald-400" />
@@ -2427,14 +2750,14 @@ export const ZostelHostelPortal: React.FC = () => {
                         )}
                       </div>
                       <div>
-                        <div className="text-[10px] uppercase font-bold text-slate-300 tracking-wider">Today's Attendance</div>
+                        <div className="text-[10px] uppercase font-bold text-slate-200 tracking-wider">Today's Attendance</div>
                         <div className="text-sm font-extrabold flex items-center gap-1.5 mt-0.5">
                           <span
                             className={
                               todayAttendanceStatus?.status?.includes('Present')
-                                ? 'text-emerald-400'
+                                ? 'text-emerald-300'
                                 : todayAttendanceStatus?.status?.includes('Leave')
-                                ? 'text-amber-400'
+                                ? 'text-amber-300'
                                 : 'text-amber-200'
                             }
                           >
@@ -2442,7 +2765,7 @@ export const ZostelHostelPortal: React.FC = () => {
                           </span>
                           {todayAttendanceStatus?.status?.includes('Present') && <span>✓</span>}
                         </div>
-                        <div className="text-[10px] text-slate-400 font-mono">
+                        <div className="text-[10px] text-slate-300 font-mono">
                           {todayAttendanceStatus?.timestamp || 'Window: 05:00 PM – 07:00 PM'}
                         </div>
                       </div>
@@ -2453,7 +2776,7 @@ export const ZostelHostelPortal: React.FC = () => {
                         setSelectedStudentForIdCard(currentStudent);
                         setShowSmartIdModal(true);
                       }}
-                      className="px-4 py-3 rounded-2xl bg-coral hover:bg-coral-dark text-white text-xs font-extrabold shadow-lg shadow-coral/25 flex items-center gap-2 transition"
+                      className="shimmer-btn px-4 py-3 rounded-2xl bg-gradient-to-r from-coral to-pink-500 hover:from-coral-dark hover:to-pink-600 text-white text-xs font-extrabold shadow-lg shadow-coral/25 flex items-center gap-2 transition"
                     >
                       <IdCard className="w-4 h-4" />
                       <span>Smart ID</span>
@@ -2466,7 +2789,7 @@ export const ZostelHostelPortal: React.FC = () => {
                         setCapturedDescriptor(null);
                         showToast('Signed Out', 'You have been logged out of your student profile.');
                       }}
-                      className="px-4 py-3 rounded-2xl bg-rose-500/20 hover:bg-rose-500 text-rose-200 hover:text-white border border-rose-400/30 transition text-xs font-extrabold flex items-center gap-2 shadow-sm"
+                      className="px-4 py-3 rounded-2xl bg-rose-500/20 hover:bg-rose-500 text-rose-100 hover:text-white border border-rose-300/30 transition text-xs font-extrabold flex items-center gap-2 shadow-sm"
                       title="Sign Out Student"
                     >
                       <LogOut className="w-4 h-4" />
@@ -2474,6 +2797,30 @@ export const ZostelHostelPortal: React.FC = () => {
                     </button>
                   </div>
                 </div>
+
+                {/* INTERACTIVE GAMIFICATION, MESS RSVP & WING CHAMPIONSHIP HUB */}
+                <StudentFunHub
+                  student={{
+                    id: currentStudent.id,
+                    roll_number: currentStudent.roll_number,
+                    name: currentStudent.name,
+                    block: currentStudent.block,
+                    streak: currentStudent.streak,
+                    dinnerRsvp: currentStudent.dinnerRsvp,
+                  }}
+                  isFaceEnrolled={isStudentFaceEnrolled(currentStudent)}
+                  todayAttendanceStatus={todayAttendanceStatus}
+                  myAttendanceLogs={myAttendanceLogs}
+                  allStudents={students}
+                  attendanceRecords={attendanceRecords}
+                  todayStr={TODAY_STR}
+                  frsStartTime={frsStartTime}
+                  frsEndTime={frsEndTime}
+                  windowIsOpen={windowStatus.isOpen}
+                  onToggleDinnerRsvp={handleToggleDinnerRsvp}
+                  isUpdatingRsvp={isUpdatingRsvp}
+                  onShowToast={showToast}
+                />
 
                 {/* TWO-STEP BIOMETRIC & FRS WORKSPACE */}
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
@@ -2693,7 +3040,8 @@ export const ZostelHostelPortal: React.FC = () => {
                   </div>
 
                   {/* STEP 2: FRS ATTENDANCE SCANNER */}
-                  <div className="lg:col-span-6 bg-white rounded-3xl p-6 sm:p-8 shadow-lg border border-teal-100 flex flex-col justify-between relative overflow-hidden">
+                  <div className="lg:col-span-6 bg-white rounded-3xl p-6 sm:p-8 shadow-lg border-2 border-teal-100 flex flex-col justify-between relative overflow-hidden">
+                    <div className="h-1.5 w-full bg-gradient-to-r from-cyan-400 via-teal-500 to-violet-500 animate-gradient-x absolute top-0 left-0 right-0" />
                     {/* Locked Overlay if not enrolled */}
                     {!isStudentFaceEnrolled(currentStudent) && (
                       <div className="absolute inset-0 z-20 bg-slate-900/80 backdrop-blur-sm flex flex-col items-center justify-center p-8 text-center text-white">
@@ -2708,13 +3056,14 @@ export const ZostelHostelPortal: React.FC = () => {
                       </div>
                     )}
 
-                    <div>
+                    <div className="pt-1">
                       <div className="flex items-center justify-between gap-2 mb-4">
-                        <span className="px-3 py-1 rounded-full bg-tealhostel-light text-tealhostel text-xs font-extrabold uppercase tracking-wider">
+                        <span className="px-3 py-1 rounded-full bg-gradient-to-r from-cyan-100 to-teal-100 text-teal-900 text-xs font-extrabold uppercase tracking-wider">
                           Step 2 • Daily Check-In
                         </span>
-                        <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-700 text-xs font-bold">
-                          Ready for FRS
+                        <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-700 text-xs font-bold flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                          <span>HUD Active</span>
                         </span>
                       </div>
 
@@ -2722,32 +3071,48 @@ export const ZostelHostelPortal: React.FC = () => {
                         Live FRS & Geo-Fence Scanner
                       </h3>
                       <p className="text-slate-500 text-xs sm:text-sm mt-1">
-                        Verifies your facial match and confirms you are inside your assigned hostel block's 150m GPS perimeter.
+                        Verifies your facial match and confirms you are inside your assigned hostel block&apos;s {geoRadius}m GPS perimeter.
                       </p>
 
                       {/* 4-Step Pipeline Pills */}
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-5">
                         {[
-                          { num: 1, label: 'Camera Ready' },
-                          { num: 2, label: 'Face Matched' },
-                          { num: 3, label: 'GPS Verified' },
-                          { num: 4, label: 'Recorded' },
+                          {
+                            num: 1,
+                            label: 'Camera Ready',
+                            activeBox: 'bg-cyan-50 border-cyan-300 scale-105 shadow-xs',
+                            activeCircle: 'bg-cyan-500 text-white',
+                          },
+                          {
+                            num: 2,
+                            label: 'Face Matched',
+                            activeBox: 'bg-violet-50 border-violet-300 scale-105 shadow-xs',
+                            activeCircle: 'bg-violet-600 text-white',
+                          },
+                          {
+                            num: 3,
+                            label: 'GPS Verified',
+                            activeBox: 'bg-emerald-50 border-emerald-300 scale-105 shadow-xs',
+                            activeCircle: 'bg-emerald-600 text-white',
+                          },
+                          {
+                            num: 4,
+                            label: 'Recorded',
+                            activeBox: 'bg-amber-50 border-amber-300 scale-105 shadow-xs',
+                            activeCircle: 'bg-amber-500 text-slate-950',
+                          },
                         ].map((pipe) => {
                           const isDone = frsStep >= pipe.num;
                           return (
                             <div
                               key={pipe.num}
                               className={`p-3 rounded-2xl border text-center transition-all ${
-                                isDone
-                                  ? 'bg-emerald-50 border-emerald-300 scale-105'
-                                  : 'bg-slate-50 border-slate-200'
+                                isDone ? pipe.activeBox : 'bg-slate-50 border-slate-200'
                               }`}
                             >
                               <div
                                 className={`w-7 h-7 mx-auto rounded-full flex items-center justify-center text-xs font-extrabold mb-1 ${
-                                  isDone
-                                    ? 'bg-tealhostel text-white'
-                                    : 'bg-slate-200 text-slate-600'
+                                  isDone ? pipe.activeCircle : 'bg-slate-200 text-slate-600'
                                 }`}
                               >
                                 {pipe.num}
@@ -2758,8 +3123,8 @@ export const ZostelHostelPortal: React.FC = () => {
                         })}
                       </div>
 
-                      {/* Step 2 Live Biometric Viewfinder */}
-                      <div className="relative mt-4 rounded-3xl overflow-hidden bg-slate-900 aspect-[16/9] flex items-center justify-center border-2 border-teal-800 shadow-inner">
+                      {/* Step 2 Live Biometric Viewfinder (Sci-Fi HUD) */}
+                      <div className="relative mt-4 rounded-3xl overflow-hidden bg-slate-950 aspect-[16/9] flex items-center justify-center border-2 border-cyan-500/60 shadow-inner">
                         <video
                           ref={attendanceVideoRef}
                           autoPlay
@@ -2768,47 +3133,79 @@ export const ZostelHostelPortal: React.FC = () => {
                           className={`w-full h-full object-cover scale-x-[-1] ${isWebcamActive ? 'block' : 'hidden'}`}
                         />
                         {!isWebcamActive && (
-                          <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-b from-slate-800 to-slate-950 p-4 text-center">
-                            <div className="relative w-20 h-20 rounded-full border-2 border-dashed border-tealhostel/80 flex items-center justify-center animate-pulse-ring">
-                              <ScanFace className="w-10 h-10 text-teal-300" />
+                          <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-b from-slate-900 via-indigo-950/60 to-slate-950 p-4 text-center">
+                            <div className="relative w-24 h-24 rounded-full border-2 border-dashed border-cyan-400/80 flex items-center justify-center animate-pulse-ring">
+                              <div className="w-16 h-16 rounded-full border border-emerald-400/40 flex items-center justify-center">
+                                <ScanFace className="w-9 h-9 text-cyan-300" />
+                              </div>
                             </div>
-                            <p className="text-xs font-semibold text-slate-300 mt-2">
+                            <p className="text-xs font-semibold text-cyan-200 mt-2.5 tracking-wide">
                               {isMarkingFRS
-                                ? 'Scanning biometric landmarks & tallying with enrolled template...'
-                                : 'Live Biometric Viewfinder Ready'}
+                                ? 'Scanning 128-D biometric landmarks & verifying coordinates...'
+                                : 'AI Biometric Viewfinder Standby'}
                             </p>
                           </div>
                         )}
 
-                        {/* Scanner Corner Brackets in Teal */}
-                        <div className="absolute top-3 left-3 w-5 h-5 border-t-2 border-l-2 border-tealhostel rounded-tl-lg pointer-events-none" />
-                        <div className="absolute top-3 right-3 w-5 h-5 border-t-2 border-r-2 border-tealhostel rounded-tr-lg pointer-events-none" />
-                        <div className="absolute bottom-3 left-3 w-5 h-5 border-b-2 border-l-2 border-tealhostel rounded-bl-lg pointer-events-none" />
-                        <div className="absolute bottom-3 right-3 w-5 h-5 border-b-2 border-r-2 border-tealhostel rounded-br-lg pointer-events-none" />
+                        {/* Cyber Grid & HUD Status Overlay */}
+                        <div className="absolute inset-0 cyber-grid pointer-events-none opacity-65" />
+                        <div className="absolute top-2.5 left-1/2 -translate-x-1/2 px-3 py-0.5 rounded-full bg-slate-950/80 border border-cyan-400/40 text-[10px] font-mono font-bold text-cyan-300 tracking-wider pointer-events-none whitespace-nowrap">
+                          AI BIOMETRIC HUD • 128-D MESH • GEO-LOCK {geoRadius}M
+                        </div>
+
+                        {/* Scanner Corner Brackets in Neon Cyan */}
+                        <div className="absolute top-3 left-3 w-5 h-5 border-t-2 border-l-2 border-cyan-400 rounded-tl-lg pointer-events-none" />
+                        <div className="absolute top-3 right-3 w-5 h-5 border-t-2 border-r-2 border-cyan-400 rounded-tr-lg pointer-events-none" />
+                        <div className="absolute bottom-3 left-3 w-5 h-5 border-b-2 border-l-2 border-cyan-400 rounded-bl-lg pointer-events-none" />
+                        <div className="absolute bottom-3 right-3 w-5 h-5 border-b-2 border-r-2 border-cyan-400 rounded-br-lg pointer-events-none" />
 
                         {isMarkingFRS && (
-                          <div className="absolute left-4 right-4 h-1 bg-gradient-to-r from-transparent via-tealhostel to-transparent shadow-[0_0_15px_#10B981] animate-scan-line" />
+                          <div className="absolute left-4 right-4 h-1.5 bg-gradient-to-r from-cyan-400 via-emerald-300 to-fuchsia-400 shadow-[0_0_20px_#22d3ee] animate-scan-line" />
                         )}
                       </div>
 
-                      {/* GPS Telemetry Readout */}
-                      <div className="mt-4 p-4 rounded-2xl bg-gradient-to-r from-teal-50 to-emerald-50 border border-teal-200/70 flex items-center justify-between gap-4">
+                      {/* Interactive Live GPS Radar Readout */}
+                      <div className="mt-4 p-4 rounded-2xl bg-gradient-to-r from-teal-50 via-cyan-50 to-emerald-50 border border-teal-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                         <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-tealhostel text-white flex items-center justify-center flex-shrink-0">
-                            <Navigation className="w-5 h-5" />
+                          <div className="relative w-11 h-11 rounded-full bg-slate-900 border-2 border-emerald-400 flex items-center justify-center flex-shrink-0 overflow-hidden shadow-sm">
+                            <div className="absolute inset-0 radar-sweep rounded-full" />
+                            <Navigation className="w-4 h-4 text-emerald-300 relative z-10" />
                           </div>
                           <div>
-                            <div className="text-xs font-extrabold text-teal-900">
-                              Mandatory Geofence: {currentStudent.block} Block
+                            <div className="text-xs font-extrabold text-teal-950 flex flex-wrap items-center gap-1.5">
+                              <span>Mandatory Geofence: {currentStudent.block}</span>
+                              {studentGpsPing && !studentGpsPing.checking && studentGpsPing.distance !== undefined && (
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
+                                    studentGpsPing.inside
+                                      ? 'bg-emerald-500 text-white'
+                                      : 'bg-rose-500 text-white'
+                                  }`}
+                                >
+                                  {studentGpsPing.inside
+                                    ? `🟢 IN RANGE (${studentGpsPing.distance}m)`
+                                    : `🔴 OUT OF RANGE (${studentGpsPing.distance}m)`}
+                                </span>
+                              )}
                             </div>
-                            <div className="text-xs text-teal-700 font-mono mt-0.5">
-                              Required: {geoCenter.lat.toFixed(4)}° N, {geoCenter.lng.toFixed(4)}° E • Max Perimeter: {geoRadius}m
+                            <div className="text-[11px] text-teal-800 font-mono mt-0.5">
+                              Required: {geoCenter.lat.toFixed(4)}° N, {geoCenter.lng.toFixed(4)}° E • Max {geoRadius}m
                             </div>
+                            {studentGpsPing?.error && (
+                              <div className="text-[10px] font-bold text-rose-600 mt-0.5">{studentGpsPing.error}</div>
+                            )}
                           </div>
                         </div>
-                        <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-extrabold border border-emerald-300 shadow-sm shrink-0">
-                          PRECISE GEOFENCE ACTIVE
-                        </span>
+
+                        <button
+                          type="button"
+                          onClick={handlePingStudentGps}
+                          disabled={studentGpsPing?.checking}
+                          className="px-3.5 py-2 rounded-xl bg-white hover:bg-teal-600 text-teal-800 hover:text-white border border-teal-300 text-xs font-extrabold shadow-xs flex items-center justify-center gap-1.5 transition shrink-0 disabled:opacity-60"
+                        >
+                          <Radio className={`w-3.5 h-3.5 ${studentGpsPing?.checking ? 'animate-spin' : 'animate-pulse'}`} />
+                          <span>{studentGpsPing?.checking ? 'Pinging...' : 'Check GPS'}</span>
+                        </button>
                       </div>
                     </div>
 
@@ -2853,8 +3250,9 @@ export const ZostelHostelPortal: React.FC = () => {
                 {/* UTILITY CARDS: OUTPASS & MAINTENANCE */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   {/* Digital Outpass */}
-                  <div className="bg-white rounded-3xl p-6 shadow-lg border border-orange-100 flex flex-col justify-between">
-                    <div>
+                  <div className="bg-white rounded-3xl p-6 shadow-lg hover:shadow-xl transition border border-orange-100 flex flex-col justify-between relative overflow-hidden">
+                    <div className="h-1.5 w-full bg-gradient-to-r from-amber-400 via-orange-500 to-coral absolute top-0 left-0 right-0" />
+                    <div className="pt-1">
                       <div className="flex items-center justify-between mb-3">
                         <span className="px-3 py-1 rounded-full bg-amberwarm-light text-amber-700 text-xs font-extrabold uppercase">
                           Gate Pass
@@ -2938,8 +3336,9 @@ export const ZostelHostelPortal: React.FC = () => {
                   </div>
 
                   {/* Room Maintenance Ticket */}
-                  <div className="bg-white rounded-3xl p-6 shadow-lg border border-slate-100 flex flex-col justify-between">
-                    <div>
+                  <div className="bg-white rounded-3xl p-6 shadow-lg hover:shadow-xl transition border border-indigo-100 flex flex-col justify-between relative overflow-hidden">
+                    <div className="h-1.5 w-full bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500 absolute top-0 left-0 right-0" />
+                    <div className="pt-1">
                       <div className="flex items-center justify-between mb-3">
                         <span className="px-3 py-1 rounded-full bg-indigo-50 text-indigo-600 text-xs font-extrabold uppercase">
                           Helpdesk
@@ -4572,124 +4971,154 @@ export const ZostelHostelPortal: React.FC = () => {
         </div>
       )}
 
-      {/* SMART ID CARD MODAL */}
+      {/* HOLOGRAPHIC 3D SMART ID CARD MODAL */}
       {showSmartIdModal && (selectedStudentForIdCard || currentStudent) && (() => {
         const viewingStudent = selectedStudentForIdCard || currentStudent!;
         const photo = viewingStudent.face_photo || viewingStudent.facePhoto;
         return (
-          <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-white rounded-3xl max-w-sm w-full overflow-hidden shadow-2xl border-2 border-amber-300">
-              <div className="bg-gradient-to-r from-blue-950 via-indigo-900 to-slate-900 p-5 text-white flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center overflow-hidden p-0.5 shadow-sm">
-                    <img src="/images/gprec-logo.png" alt="GPREC" className="w-full h-full object-contain" />
-                  </div>
-                  <div>
-                    <div className="text-[10px] uppercase tracking-widest text-amber-300 font-bold">
-                      G. Pulla Reddy Engg. College
+          <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-md flex items-center justify-center p-4">
+            <div
+              onMouseMove={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect();
+                const x = (e.clientX - rect.left) / rect.width - 0.5;
+                const y = (e.clientY - rect.top) / rect.height - 0.5;
+                setIdCardTilt({ rx: Number((-y * 12).toFixed(2)), ry: Number((x * 12).toFixed(2)) });
+              }}
+              onMouseLeave={() => setIdCardTilt({ rx: 0, ry: 0 })}
+              style={{
+                transform: `perspective(900px) rotateX(${idCardTilt.rx}deg) rotateY(${idCardTilt.ry}deg)`,
+              }}
+              className="holo-card p-[2px] bg-gradient-to-br from-amber-300 via-pink-400 to-cyan-400 rounded-[28px] max-w-sm w-full shadow-2xl"
+            >
+              <div className="bg-white rounded-[26px] w-full overflow-hidden">
+                <div className="bg-gradient-to-r from-indigo-950 via-purple-900 to-teal-900 p-5 text-white flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center overflow-hidden p-0.5 shadow-sm">
+                      <img src="/images/gprec-logo.png" alt="GPREC" className="w-full h-full object-contain" />
                     </div>
-                    <div className="font-display font-extrabold text-sm">GNBVG Smart Hostel ID</div>
-                  </div>
-                </div>
-                <button
-                  onClick={() => {
-                    setShowSmartIdModal(false);
-                    setSelectedStudentForIdCard(null);
-                  }}
-                  className="w-8 h-8 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center text-white"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-              <div className="p-6 text-center space-y-4 bg-gradient-to-b from-cream to-orange-50/40">
-                {/* Real Captured Face Photo or Fallback Initials Avatar */}
-                {photo ? (
-                  <div className="relative w-24 h-24 mx-auto rounded-3xl overflow-hidden border-2 border-amber-400 shadow-xl bg-slate-900 ring-4 ring-amber-100">
-                    <img
-                      src={photo}
-                      alt={viewingStudent.name}
-                      className="w-full h-full object-cover"
-                    />
-                    <div className="absolute top-1 right-1 px-1.5 py-0.5 rounded-full bg-emerald-600 text-[9px] font-extrabold text-white shadow">
-                      FRS ✓
+                    <div>
+                      <div className="text-[10px] uppercase tracking-widest text-amber-300 font-bold">
+                        G. Pulla Reddy Engg. College
+                      </div>
+                      <div className="font-display font-extrabold text-sm">GNBVG Smart Hostel ID ✨</div>
                     </div>
                   </div>
-                ) : (
-                  <div className="w-20 h-20 mx-auto rounded-3xl bg-gradient-to-br from-coral to-amber-500 text-white font-display font-extrabold text-2xl flex items-center justify-center shadow-lg">
-                    {viewingStudent.name
-                      .split(' ')
-                      .map((n) => n[0])
-                      .join('')
-                      .slice(0, 2)
-                      .toUpperCase()}
-                  </div>
-                )}
-                <div>
-                  <h4 className="font-display font-extrabold text-xl text-slate-900">{viewingStudent.name}</h4>
-                  <p className="font-mono text-xs font-extrabold text-coral mt-0.5">{viewingStudent.roll_number || viewingStudent.id}</p>
-                </div>
-                <div className="grid grid-cols-3 gap-2 text-xs bg-white p-3 rounded-2xl border border-orange-100 shadow-sm">
-                  <div>
-                    <span className="text-[10px] text-slate-400 uppercase block font-bold">Year</span>
-                    <strong className="text-slate-800">{viewingStudent.year}</strong>
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-slate-400 uppercase block font-bold">Block</span>
-                    <strong className="text-slate-800">{viewingStudent.block}</strong>
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-slate-400 uppercase block font-bold">Room</span>
-                    <strong className="text-slate-800">{viewingStudent.room}</strong>
-                  </div>
-                </div>
-
-                {/* QR Code SVG & Biometric Status */}
-                <div className="p-3 bg-white rounded-2xl border border-slate-200 inline-flex flex-col items-center">
-                  <svg viewBox="0 0 100 100" className="w-24 h-24 fill-slate-900">
-                    <rect x="10" y="10" width="25" height="25" rx="3" />
-                    <rect x="15" y="15" width="15" height="15" fill="white" />
-                    <rect x="19" y="19" width="7" height="7" />
-                    <rect x="65" y="10" width="25" height="25" rx="3" />
-                    <rect x="70" y="15" width="15" height="15" fill="white" />
-                    <rect x="74" y="19" width="7" height="7" />
-                    <rect x="10" y="65" width="25" height="25" rx="3" />
-                    <rect x="15" y="70" width="15" height="15" fill="white" />
-                    <rect x="19" y="74" width="7" height="7" />
-                    <rect x="44" y="14" width="12" height="12" />
-                    <rect x="44" y="44" width="14" height="14" />
-                    <rect x="68" y="48" width="18" height="10" />
-                    <rect x="46" y="70" width="14" height="18" />
-                    <rect x="70" y="72" width="18" height="16" />
-                  </svg>
-                  <span
-                    className={`mt-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold ${
-                      isStudentFaceEnrolled(viewingStudent)
-                        ? 'bg-emerald-100 text-emerald-700'
-                        : 'bg-amber-100 text-amber-700'
-                    }`}
+                  <button
+                    onClick={() => {
+                      setShowSmartIdModal(false);
+                      setSelectedStudentForIdCard(null);
+                      setIdCardTilt({ rx: 0, ry: 0 });
+                    }}
+                    className="w-8 h-8 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center text-white"
                   >
-                    {isStudentFaceEnrolled(viewingStudent) ? '✓ FRS Biometric Active' : '⚠ Face Enrollment Pending'}
-                  </span>
+                    <X className="w-4 h-4" />
+                  </button>
                 </div>
-
-                {/* Warden / Admin Face Reset Control (ONLY visible to authenticated Wardens) */}
-                {isStudentFaceEnrolled(viewingStudent) && (activePortal === 'warden' || isWardenAuthenticated) && (
-                  <div className="pt-3 border-t border-orange-200/60 mt-2 text-center">
-                    <button
-                      type="button"
-                      disabled={isResettingFace}
-                      onClick={() => handleResetFaceId(viewingStudent.roll_number || viewingStudent.id, viewingStudent.name)}
-                      className="w-full py-2.5 px-3 rounded-2xl bg-amber-50 hover:bg-rose-50 text-amber-800 hover:text-rose-700 border border-amber-200 hover:border-rose-300 font-extrabold text-xs flex items-center justify-center gap-2 transition shadow-xs disabled:opacity-50"
-                      title="Mistaken photo? Reset Face ID & grant 3 fresh enrollment attempts"
-                    >
-                      <RotateCcw className="w-3.5 h-3.5 text-rose-500" />
-                      <span>{isResettingFace ? 'Resetting Face...' : 'Delete Face ID & Allow Re-Enrollment'}</span>
-                    </button>
-                    <p className="text-[10px] text-slate-400 mt-1 font-medium">
-                      Official Warden override: clears biometric data if student mistakenly submitted someone else's face
-                    </p>
+                <div className="p-6 text-center space-y-4 bg-gradient-to-b from-cream via-white to-orange-50/50">
+                  {/* Real Captured Face Photo or Fallback Initials Avatar */}
+                  {photo ? (
+                    <div className="relative w-24 h-24 mx-auto rounded-3xl overflow-hidden border-2 border-amber-400 shadow-xl bg-slate-900 ring-4 ring-pink-100">
+                      <img
+                        src={photo}
+                        alt={viewingStudent.name}
+                        className="w-full h-full object-cover"
+                      />
+                      <div className="absolute top-1 right-1 px-1.5 py-0.5 rounded-full bg-emerald-600 text-[9px] font-extrabold text-white shadow">
+                        FRS ✓
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="w-20 h-20 mx-auto rounded-3xl bg-gradient-to-br from-coral via-pink-500 to-amber-500 text-white font-display font-extrabold text-2xl flex items-center justify-center shadow-lg">
+                      {viewingStudent.name
+                        .split(' ')
+                        .map((n) => n[0])
+                        .join('')
+                        .slice(0, 2)
+                        .toUpperCase()}
+                    </div>
+                  )}
+                  <div>
+                    <h4 className="font-display font-extrabold text-xl text-slate-900">{viewingStudent.name}</h4>
+                    <div className="flex items-center justify-center gap-2 mt-1">
+                      <p className="font-mono text-xs font-extrabold text-coral">{viewingStudent.roll_number || viewingStudent.id}</p>
+                      <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 text-[10px] font-extrabold">
+                        🔥 {viewingStudent.streak || 0}d Streak
+                      </span>
+                    </div>
                   </div>
-                )}
+                  <div className="grid grid-cols-3 gap-2 text-xs bg-white p-3 rounded-2xl border border-orange-100 shadow-sm">
+                    <div>
+                      <span className="text-[10px] text-slate-400 uppercase block font-bold">Year</span>
+                      <strong className="text-slate-800">{viewingStudent.year}</strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-400 uppercase block font-bold">Block</span>
+                      <strong className="text-slate-800">{viewingStudent.block}</strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-400 uppercase block font-bold">Room</span>
+                      <strong className="text-slate-800">{viewingStudent.room}</strong>
+                    </div>
+                  </div>
+
+                  {/* QR Code SVG & Biometric Status */}
+                  <div className="p-3 bg-white rounded-2xl border border-slate-200 inline-flex flex-col items-center shadow-xs">
+                    <svg viewBox="0 0 100 100" className="w-24 h-24 fill-slate-900">
+                      <rect x="10" y="10" width="25" height="25" rx="3" />
+                      <rect x="15" y="15" width="15" height="15" fill="white" />
+                      <rect x="19" y="19" width="7" height="7" />
+                      <rect x="65" y="10" width="25" height="25" rx="3" />
+                      <rect x="70" y="15" width="15" height="15" fill="white" />
+                      <rect x="74" y="19" width="7" height="7" />
+                      <rect x="10" y="65" width="25" height="25" rx="3" />
+                      <rect x="15" y="70" width="15" height="15" fill="white" />
+                      <rect x="19" y="74" width="7" height="7" />
+                      <rect x="44" y="14" width="12" height="12" />
+                      <rect x="44" y="44" width="14" height="14" />
+                      <rect x="68" y="48" width="18" height="10" />
+                      <rect x="46" y="70" width="14" height="18" />
+                      <rect x="70" y="72" width="18" height="16" />
+                    </svg>
+                    <span
+                      className={`mt-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold ${
+                        isStudentFaceEnrolled(viewingStudent)
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : 'bg-amber-100 text-amber-700'
+                      }`}
+                    >
+                      {isStudentFaceEnrolled(viewingStudent) ? '✓ FRS Biometric Active' : '⚠ Face Enrollment Pending'}
+                    </span>
+                  </div>
+
+                  {/* Download Smart ID Card PNG */}
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadSmartIdCard(viewingStudent)}
+                    className="shimmer-btn w-full py-2.5 px-4 rounded-2xl bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 hover:from-indigo-700 hover:to-fuchsia-700 text-white font-extrabold text-xs shadow-md shadow-indigo-500/20 flex items-center justify-center gap-2 transition"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Download Smart ID Card (PNG)</span>
+                  </button>
+
+                  {/* Warden / Admin Face Reset Control (ONLY visible to authenticated Wardens) */}
+                  {isStudentFaceEnrolled(viewingStudent) && (activePortal === 'warden' || isWardenAuthenticated) && (
+                    <div className="pt-3 border-t border-orange-200/60 mt-2 text-center">
+                      <button
+                        type="button"
+                        disabled={isResettingFace}
+                        onClick={() => handleResetFaceId(viewingStudent.roll_number || viewingStudent.id, viewingStudent.name)}
+                        className="w-full py-2.5 px-3 rounded-2xl bg-amber-50 hover:bg-rose-50 text-amber-800 hover:text-rose-700 border border-amber-200 hover:border-rose-300 font-extrabold text-xs flex items-center justify-center gap-2 transition shadow-xs disabled:opacity-50"
+                        title="Mistaken photo? Reset Face ID & grant 3 fresh enrollment attempts"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5 text-rose-500" />
+                        <span>{isResettingFace ? 'Resetting Face...' : 'Delete Face ID & Allow Re-Enrollment'}</span>
+                      </button>
+                      <p className="text-[10px] text-slate-400 mt-1 font-medium">
+                        Official Warden override: clears biometric data if student mistakenly submitted someone else's face
+                      </p>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
