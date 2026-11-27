@@ -134,6 +134,47 @@ function formatYearLabel(rawYear: unknown): string {
   return y;
 }
 
+function csvTextCell(raw: unknown): string {
+  const str = String(raw ?? '').replace(/\r?\n/g, ' ').trim();
+  if (!str) return '""';
+  if (/\d/.test(str) || /^[=+\-@]/.test(str)) {
+    const formulaSafe = str.replace(/"/g, "'");
+    return `"=""${formulaSafe}"""`;
+  }
+  return `"${str.replace(/"/g, '""')}"`;
+}
+
+function buildExcelCsv(headers: string[], rows: unknown[][]): string {
+  const headerLine = headers.map((h) => csvTextCell(h)).join(',');
+  const dataLines = rows.map((row) => row.map((cell) => csvTextCell(cell)).join(','));
+  return '\uFEFF' + [headerLine, ...dataLines].join('\r\n');
+}
+
+function matchesYearFilter(rawYear: unknown, yearFilter: string): boolean {
+  if (!yearFilter || yearFilter === 'ALL') return true;
+  const formatted = formatYearLabel(rawYear).toLowerCase();
+  const rawNorm = String(rawYear || '').trim().toLowerCase();
+  const filterNorm = yearFilter.trim().toLowerCase();
+  if (rawNorm === filterNorm || formatted === filterNorm) return true;
+  if (filterNorm.includes('1') && (formatted.includes('1') || rawNorm === '1')) return true;
+  if (filterNorm.includes('2') && (formatted.includes('2') || rawNorm === '2')) return true;
+  if (filterNorm.includes('3') && (formatted.includes('3') || rawNorm === '3')) return true;
+  if (filterNorm.includes('4') && (formatted.includes('4') || rawNorm === '4')) return true;
+  if (filterNorm.includes('alumni') && formatted.includes('alumni')) return true;
+  return false;
+}
+
+function csvResponse(content: string, filename: string): Response {
+  return new Response(content, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Cache-Control': 'no-store',
+    },
+  });
+}
+
 function computeWindowStatus(settings: Record<string, string>, hours: number, minutes: number) {
   const startTime = settings.frs_start_time || '17:00';
   const endTime = settings.frs_end_time || '19:00';
@@ -855,6 +896,212 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         face_photo: rows[0].face_photo || null,
         face_enrolled_at: rows[0].face_enrolled_at || null,
       });
+    }
+
+    // 11d. GET /api/warden/attendance/weekly-csv (Filtered Attendance Archive with All Numbers as Excel Text)
+    if (pathname === '/api/warden/attendance/weekly-csv') {
+      const yearFilter = (url.searchParams.get('year') || 'ALL').trim();
+      const blockFilter = (url.searchParams.get('block') || 'ALL').trim();
+      const searchFilter = (url.searchParams.get('search') || '').trim().toLowerCase();
+      const statusFilter = (url.searchParams.get('status') || 'all').trim().toLowerCase();
+
+      const records = await tursoQuery(
+        env,
+        'SELECT date, timestamp, roll_number, name, year, block, room_number, status, gps_distance, face_distance, is_geofence_breach, warden_action FROM attendance ORDER BY date DESC, timestamp DESC'
+      );
+
+      const filtered = records.filter((r: any) => {
+        if (searchFilter) {
+          const matchQ =
+            String(r.name || '').toLowerCase().includes(searchFilter) ||
+            String(r.roll_number || '').toLowerCase().includes(searchFilter) ||
+            String(r.room_number || '').toLowerCase().includes(searchFilter) ||
+            String(r.block || '').toLowerCase().includes(searchFilter);
+          if (!matchQ) return false;
+        } else {
+          if (!matchesYearFilter(r.year, yearFilter)) return false;
+          if (blockFilter !== 'ALL' && String(r.block || '') !== blockFilter) return false;
+        }
+        const stLower = String(r.status || '').toLowerCase();
+        if (statusFilter === 'present') return stLower.includes('present');
+        if (statusFilter === 'absent') return stLower === 'absent';
+        if (statusFilter === 'alerts') return Number(r.is_geofence_breach) === 1;
+        return true;
+      });
+
+      const headers = [
+        'S.No',
+        'Date',
+        'Time',
+        'Roll Number',
+        'Name',
+        'Year',
+        'Hostel Block',
+        'Room',
+        'Status',
+        'GPS Distance (m)',
+        'Biometric Distance',
+        'Geofence Breach',
+        'Warden Action',
+      ];
+      const rows = filtered.map((r: any, idx: number) => [
+        idx + 1,
+        r.date || '--',
+        r.timestamp || '--',
+        r.roll_number || '--',
+        r.name || '--',
+        formatYearLabel(r.year),
+        r.block || '--',
+        r.room_number || '--',
+        r.status || '--',
+        r.gps_distance !== null && r.gps_distance !== undefined ? Math.round(Number(r.gps_distance)) : '0',
+        r.face_distance !== null && r.face_distance !== undefined ? Number(r.face_distance).toFixed(4) : '--',
+        Number(r.is_geofence_breach) === 1 ? 'YES (Breach)' : 'NO',
+        r.warden_action || '--',
+      ]);
+
+      const yrSlug = yearFilter === 'ALL' ? 'AllYears' : yearFilter.replace(/\s+/g, '');
+      const stSlug = statusFilter === 'all' ? 'All' : statusFilter.charAt(0).toUpperCase() + statusFilter.slice(1);
+      return csvResponse(
+        buildExcelCsv(headers, rows),
+        `GNBVG_Weekly_Archive_${yrSlug}_${stSlug}_${todayStr}.csv`
+      );
+    }
+
+    // 11e. GET /api/warden/attendance/matrix-csv (Filtered 15-Day / 7-Day Matrix Register with All Numbers as Excel Text)
+    if (pathname === '/api/warden/attendance/matrix-csv') {
+      const numDays = Math.min(Math.max(parseInt(url.searchParams.get('days') || '15', 10) || 15, 1), 60);
+      const endDateStr = (url.searchParams.get('end_date') || todayStr).trim();
+      const yearFilter = (url.searchParams.get('year') || 'ALL').trim();
+      const blockFilter = (url.searchParams.get('block') || 'ALL').trim();
+      const searchFilter = (url.searchParams.get('search') || '').trim().toLowerCase();
+      const statusFilter = (url.searchParams.get('status') || 'all').trim().toLowerCase();
+
+      const dates: string[] = [];
+      const endDt = new Date(`${endDateStr}T00:00:00Z`);
+      for (let i = numDays - 1; i >= 0; i--) {
+        const d = new Date(endDt.getTime());
+        d.setUTCDate(endDt.getUTCDate() - i);
+        dates.push(d.toISOString().split('T')[0]);
+      }
+
+      const [studentsRaw, attRows, outpasses] = await tursoBatch(env, [
+        {
+          sql: "SELECT roll_number, name, year, block, room_number, student_phone, father_phone FROM users WHERE role = 'student' ORDER BY year ASC, block ASC, roll_number ASC",
+        },
+        {
+          sql: 'SELECT roll_number, date, status FROM attendance WHERE date >= ? AND date <= ?',
+          args: [dates[0], dates[dates.length - 1]],
+        },
+        {
+          sql: "SELECT roll_number, from_date, to_date FROM outpasses WHERE status = 'Approved' AND to_date >= ? AND from_date <= ?",
+          args: [dates[0], dates[dates.length - 1]],
+        },
+      ]);
+
+      const attSet = new Set<string>();
+      for (let i = 0; i < attRows.length; i++) {
+        const r = attRows[i];
+        if (String(r.status || '').toLowerCase().includes('present')) {
+          attSet.add(`${String(r.roll_number || '').toUpperCase()}_${r.date}`);
+        }
+      }
+
+      const filteredStudents = studentsRaw.filter((s: any) => {
+        if (searchFilter) {
+          return (
+            String(s.name || '').toLowerCase().includes(searchFilter) ||
+            String(s.roll_number || '').toLowerCase().includes(searchFilter) ||
+            String(s.room_number || '').toLowerCase().includes(searchFilter) ||
+            String(s.block || '').toLowerCase().includes(searchFilter)
+          );
+        }
+        if (!matchesYearFilter(s.year, yearFilter)) return false;
+        if (blockFilter !== 'ALL' && String(s.block || '') !== blockFilter) return false;
+        return true;
+      });
+
+      const dateHeaders = dates.map((d) => {
+        const [y, m, day] = d.split('-');
+        return `${day}/${m}/${y.slice(-2)}`;
+      });
+
+      const headers = [
+        'S.No',
+        'Roll Number',
+        'Student Name',
+        'Year',
+        'Hostel Block',
+        'Room Number',
+        'Student Phone',
+        'Parent Phone',
+        ...dateHeaders,
+        'Total Days',
+        'Total Present (P)',
+        'Total Absent (A)',
+        'Total Leave (L)',
+        'Attendance %',
+      ];
+
+      const rows: unknown[][] = [];
+      let serial = 1;
+      for (let i = 0; i < filteredStudents.length; i++) {
+        const s = filteredStudents[i];
+        const rollUpper = String(s.roll_number || '').toUpperCase();
+        let pCount = 0;
+        let aCount = 0;
+        let lCount = 0;
+        const dayStatuses: string[] = [];
+
+        for (let j = 0; j < dates.length; j++) {
+          const dStr = dates[j];
+          const onLeave = outpasses.some(
+            (o: any) =>
+              String(o.roll_number || '').toUpperCase() === rollUpper &&
+              o.from_date <= dStr &&
+              o.to_date >= dStr
+          );
+          if (attSet.has(`${rollUpper}_${dStr}`)) {
+            dayStatuses.push('P');
+            pCount++;
+          } else if (onLeave) {
+            dayStatuses.push('L');
+            lCount++;
+          } else {
+            dayStatuses.push('A');
+            aCount++;
+          }
+        }
+
+        const latestStatus = dayStatuses[dayStatuses.length - 1];
+        if (statusFilter === 'present' && latestStatus !== 'P') continue;
+        if (statusFilter === 'absent' && latestStatus !== 'A') continue;
+
+        const pct = Math.round((pCount / (numDays || 1)) * 100);
+        rows.push([
+          serial++,
+          s.roll_number || '--',
+          s.name || '--',
+          formatYearLabel(s.year),
+          s.block || '--',
+          s.room_number || '--',
+          s.student_phone || '--',
+          s.father_phone || '--',
+          ...dayStatuses,
+          numDays,
+          pCount,
+          aCount,
+          lCount,
+          `${pct}%`,
+        ]);
+      }
+
+      const yrSlug = yearFilter === 'ALL' ? 'AllYears' : yearFilter.replace(/\s+/g, '');
+      const stSlug = statusFilter === 'all' ? 'All' : statusFilter.charAt(0).toUpperCase() + statusFilter.slice(1);
+      return csvResponse(
+        buildExcelCsv(headers, rows),
+        `GNBVG_${numDays}Day_Matrix_${yrSlug}_${stSlug}_${endDateStr}.csv`
+      );
     }
 
     // 12. POST /api/warden/attendance/purge-history

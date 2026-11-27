@@ -109,6 +109,8 @@ interface StudentUser {
   has_descriptor?: boolean;
   face_enrolled_at?: string | null;
   face_enroll_attempts?: number;
+  student_phone?: string | null;
+  father_phone?: string | null;
   streak: number;
   dinnerRsvp: boolean;
   branch?: string;
@@ -1969,39 +1971,30 @@ export const ZostelHostelPortal: React.FC = () => {
     showToast('Parent Alert SMS Copied!', `Copied official absence notice for ${name} to clipboard.`);
   };
 
-  // Export CSV
-  const exportAttendanceCSV = () => {
-    let csv = 'Roll Number,Name,Year,Block,Room,Date,Timestamp,Status\n';
-    students.forEach((s) => {
-      const rec = attendanceRecords.find((r) => r.studentId === s.id && r.date === wardenDate);
-      const leave = outpassRequests.find(
-        (o) => o.studentId === s.id && o.status === 'Approved' && o.fromDate <= wardenDate && o.toDate >= wardenDate
-      );
-      const status = rec ? 'Present' : leave ? 'On Approved Leave' : 'Absent';
-      const time = rec ? rec.timestamp : '--';
-      csv += `${s.id},"${s.name}",${s.year},${s.block},${s.room},${wardenDate},${time},${status}\n`;
-    });
-
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `GNBVG_Attendance_${wardenDate}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-    showToast('CSV Exported', `Downloaded GNBVG_Attendance_${wardenDate}.csv`);
-  };
-
-  // Download All Weekly Records
+  // Download All Weekly Records (Respects Active Year / Block / Status / Search Filters)
   const downloadWeeklyCSV = () => {
-    window.open('/api/warden/attendance/weekly-csv', '_blank');
-    showToast('Weekly CSV Generated 📊', 'Downloading complete weekly attendance archive.');
+    const params = new URLSearchParams({
+      year: wardenYearFilter,
+      block: wardenBlockFilter,
+      search: wardenSearch.trim(),
+      status: wardenActiveTab,
+    });
+    window.open(`/api/warden/attendance/weekly-csv?${params.toString()}`, '_blank');
+    showToast('Weekly CSV Generated 📊', 'Downloading filtered attendance archive (all numbers formatted as text).');
   };
 
-  // Download 15-Day / 7-Day Matrix Register (P / A / L grid per student)
+  // Download 15-Day / 7-Day Matrix Register (P / A / L grid per student, respects active filters)
   const downloadMatrixCSV = (days: number = 15) => {
-    window.open(`/api/warden/attendance/matrix-csv?days=${days}&end_date=${wardenDate}`, '_blank');
-    showToast('Attendance Register Generated 📊', `Downloading ${days}-day attendance register matrix (P / A / L grid).`);
+    const params = new URLSearchParams({
+      days: String(days),
+      end_date: wardenDate,
+      year: wardenYearFilter,
+      block: wardenBlockFilter,
+      search: wardenSearch.trim(),
+      status: wardenActiveTab,
+    });
+    window.open(`/api/warden/attendance/matrix-csv?${params.toString()}`, '_blank');
+    showToast('Attendance Register Generated 📊', `Downloading ${days}-day filtered matrix (all numbers formatted as text).`);
   };
 
   // Download 5-Year Permanent Biometric & Database JSON Archive
@@ -2146,6 +2139,328 @@ export const ZostelHostelPortal: React.FC = () => {
   const safeAbsentPage = Math.min(absentPage, totalAbsentPages);
   const absentStartIdx = (safeAbsentPage - 1) * RESIDENTS_PER_PAGE;
   const paginatedAbsent = absentList.slice(absentStartIdx, absentStartIdx + RESIDENTS_PER_PAGE);
+
+  const csvTextCell = (raw: unknown): string => {
+    const str = String(raw ?? '').replace(/\r?\n/g, ' ').trim();
+    if (!str) return '""';
+    if (/\d/.test(str) || /^[=+\-@]/.test(str)) {
+      const formulaSafe = str.replace(/"/g, "'");
+      return `"=""${formulaSafe}"""`;
+    }
+    return `"${str.replace(/"/g, '""')}"`;
+  };
+
+  const buildExcelCsv = (headers: string[], rows: unknown[][]): string => {
+    const headerLine = headers.map((h) => csvTextCell(h)).join(',');
+    const dataLines = rows.map((row) => row.map((cell) => csvTextCell(cell)).join(','));
+    return '\uFEFF' + [headerLine, ...dataLines].join('\r\n');
+  };
+
+  const matchesActiveYearBlockSearch = (
+    yearRaw: unknown,
+    blockRaw: unknown,
+    nameRaw: unknown,
+    rollRaw: unknown,
+    roomRaw: unknown
+  ): boolean => {
+    const q = wardenSearch.trim().toLowerCase();
+    if (q) {
+      return (
+        String(nameRaw || '').toLowerCase().includes(q) ||
+        String(rollRaw || '').toLowerCase().includes(q) ||
+        String(roomRaw || '').toLowerCase().includes(q) ||
+        String(blockRaw || '').toLowerCase().includes(q)
+      );
+    }
+    const yNorm = String(yearRaw || '').trim().toLowerCase();
+    const fNorm = wardenYearFilter.trim().toLowerCase();
+    const matchY =
+      wardenYearFilter === 'ALL' ||
+      String(yearRaw || '') === wardenYearFilter ||
+      (fNorm.includes('1') && (yNorm === '1' || yNorm.includes('1'))) ||
+      (fNorm.includes('2') && (yNorm === '2' || yNorm.includes('2'))) ||
+      (fNorm.includes('3') && (yNorm === '3' || yNorm.includes('3'))) ||
+      (fNorm.includes('4') && (yNorm === '4' || yNorm.includes('4'))) ||
+      (fNorm.includes('alumni') && yNorm.includes('alumni'));
+    const matchB = wardenBlockFilter === 'ALL' || String(blockRaw || '') === wardenBlockFilter;
+    return matchY && matchB;
+  };
+
+  const filteredAlerts = outOfRangeAlerts.filter((a: any) =>
+    matchesActiveYearBlockSearch(a.year, a.block, a.name, a.roll_number || a.studentId, a.room || a.room_number)
+  );
+
+  const filteredOutpasses = outpassRequests.filter((o: any) =>
+    matchesActiveYearBlockSearch(
+      o.year,
+      o.block,
+      o.studentName || o.student_name,
+      o.studentId || o.roll_number || o.student_id,
+      ''
+    )
+  );
+
+  const csvExportMeta = (() => {
+    const yrLabel = wardenYearFilter === 'ALL' ? 'All Years' : wardenYearFilter;
+    const yrSlug = wardenYearFilter === 'ALL' ? 'AllYears' : wardenYearFilter.replace(/\s+/g, '');
+    const blkSlug = wardenBlockFilter === 'ALL' ? '' : wardenBlockFilter.replace(/\s+/g, '');
+
+    let scopeLabel = 'All';
+    let scopeSlug = 'AllResidents';
+    let count = displayedResidents.length;
+
+    if (wardenActiveTab === 'present') {
+      scopeLabel = 'Present';
+      scopeSlug = 'Present';
+      count = presentList.length;
+    } else if (wardenActiveTab === 'absent') {
+      scopeLabel = 'Absent';
+      scopeSlug = 'Absent';
+      count = absentList.length;
+    } else if (wardenActiveTab === 'alerts') {
+      scopeLabel = 'Alerts';
+      scopeSlug = 'OutOfRangeAlerts';
+      count = filteredAlerts.length;
+    } else if (wardenActiveTab === 'outpass') {
+      scopeLabel = 'Outpasses';
+      scopeSlug = 'Outpasses';
+      count = filteredOutpasses.length;
+    } else if (wardenEnrollFilter === 'ENROLLED') {
+      scopeLabel = 'Enrolled';
+      scopeSlug = 'Enrolled';
+      count = displayedResidents.length;
+    } else if (wardenEnrollFilter === 'PENDING') {
+      scopeLabel = 'Face Pending';
+      scopeSlug = 'FacePending';
+      count = displayedResidents.length;
+    }
+
+    const parts = [yrLabel];
+    if (wardenBlockFilter !== 'ALL') parts.push(wardenBlockFilter);
+    parts.push(scopeLabel);
+    if (wardenSearch.trim()) parts.push('Search');
+    parts.push(String(count));
+
+    const slugParts = ['GNBVG', yrSlug];
+    if (blkSlug) slugParts.push(blkSlug);
+    slugParts.push(scopeSlug);
+    if (wardenSearch.trim()) slugParts.push('Filtered');
+    slugParts.push(wardenDate);
+
+    return {
+      count,
+      summary: parts.join(' • '),
+      filename: `${slugParts.join('_')}.csv`,
+    };
+  })();
+
+  const exportAttendanceCSV = () => {
+    if (csvExportMeta.count === 0) {
+      showToast('No Matching Rows', `No matching ${csvExportMeta.summary} records found to export.`, 'warning');
+      return;
+    }
+
+    let headers: string[] = [];
+    let rows: unknown[][] = [];
+
+    if (wardenActiveTab === 'present') {
+      headers = [
+        'S.No',
+        'Roll Number',
+        'Student Name',
+        'Year',
+        'Hostel Block',
+        'Room Number',
+        'Student Phone',
+        'Parent Phone',
+        'Date',
+        'Attendance Status',
+        'Attendance Time',
+        'Method',
+        'FRS Biometric Status',
+        'Face Enrolled At',
+      ];
+      rows = presentList.map(({ student: s, record: rec }, idx) => {
+        const enrolled = isStudentFaceEnrolled(s);
+        return [
+          idx + 1,
+          s.roll_number || s.id,
+          s.name,
+          s.year,
+          s.block,
+          s.room || '--',
+          s.student_phone || '--',
+          s.father_phone || '--',
+          wardenDate,
+          rec.status || 'Present',
+          rec.timestamp || '--',
+          rec.method || 'FRS Biometrics + GPS',
+          enrolled ? 'FRS Enrolled' : 'Enrollment Pending',
+          enrolled ? (s.face_enrolled_at || 'Verified (Prior)') : '--',
+        ];
+      });
+    } else if (wardenActiveTab === 'absent') {
+      headers = [
+        'S.No',
+        'Roll Number',
+        'Student Name',
+        'Year',
+        'Hostel Block',
+        'Room Number',
+        'Student Phone',
+        'Parent Phone',
+        'Date',
+        'Attendance Status',
+        'Attendance Time',
+        'FRS Biometric Status',
+        'Face Enrolled At',
+      ];
+      rows = absentList.map((s, idx) => {
+        const enrolled = isStudentFaceEnrolled(s);
+        return [
+          idx + 1,
+          s.roll_number || s.id,
+          s.name,
+          s.year,
+          s.block,
+          s.room || '--',
+          s.student_phone || '--',
+          s.father_phone || '--',
+          wardenDate,
+          'Absent',
+          '--',
+          enrolled ? 'FRS Enrolled' : 'Enrollment Pending',
+          enrolled ? (s.face_enrolled_at || 'Verified (Prior)') : '--',
+        ];
+      });
+    } else if (wardenActiveTab === 'alerts') {
+      headers = [
+        'S.No',
+        'Roll Number',
+        'Student Name',
+        'Year',
+        'Hostel Block',
+        'Room Number',
+        'Date',
+        'Timestamp',
+        'GPS Distance (m)',
+        'Allowed Radius (m)',
+        'Breach Excess (m)',
+        'Latitude',
+        'Longitude',
+        'Status',
+      ];
+      rows = filteredAlerts.map((a: any, idx: number) => {
+        const gpsDist = a.gpsDistance ?? a.gps_distance ?? 0;
+        const allowedRad = a.allowedRadius ?? 100;
+        const excess = a.breachMeters ?? Math.max(0, Math.round(Number(gpsDist) - Number(allowedRad)));
+        return [
+          idx + 1,
+          a.roll_number || a.studentId || '--',
+          a.name || '--',
+          a.year || '--',
+          a.block || '--',
+          a.room || a.room_number || '--',
+          a.date || wardenDate,
+          a.timestamp || '--',
+          Math.round(Number(gpsDist)),
+          Math.round(Number(allowedRad)),
+          Math.round(Number(excess)),
+          a.latitude !== null && a.latitude !== undefined ? String(a.latitude) : '--',
+          a.longitude !== null && a.longitude !== undefined ? String(a.longitude) : '--',
+          a.status || 'FLAGGED_OUT_OF_RANGE',
+        ];
+      });
+    } else if (wardenActiveTab === 'outpass') {
+      headers = [
+        'S.No',
+        'Roll Number',
+        'Student Name',
+        'Year',
+        'Hostel Block',
+        'Leave Type',
+        'From Date',
+        'To Date',
+        'Parent Phone',
+        'Status',
+      ];
+      rows = filteredOutpasses.map((o: any, idx: number) => [
+        idx + 1,
+        o.studentId || o.roll_number || o.student_id || '--',
+        o.studentName || o.student_name || '--',
+        o.year || '--',
+        o.block || '--',
+        o.type || '--',
+        o.fromDate || o.from_date || '--',
+        o.toDate || o.to_date || '--',
+        o.parentPhone || o.parent_phone || '--',
+        o.status || 'Approved',
+      ]);
+    } else {
+      headers = [
+        'S.No',
+        'Roll Number',
+        'Student Name',
+        'Year',
+        'Hostel Block',
+        'Room Number',
+        'Student Phone',
+        'Parent Phone',
+        'Date',
+        'Attendance Status',
+        'Attendance Time',
+        'FRS Biometric Status',
+        'Face Enrolled At',
+      ];
+      rows = displayedResidents.map((s, idx) => {
+        const rec = attendanceRecords.find(
+          (r) =>
+            (r.studentId === s.id || r.id === s.id) &&
+            r.date === wardenDate &&
+            (r.status === 'Present' || r.status === 'Present (Warden Override)')
+        );
+        const leave = outpassRequests.find(
+          (o: any) =>
+            (o.studentId === s.id || o.roll_number === s.id) &&
+            o.status === 'Approved' &&
+            (o.fromDate || o.from_date) <= wardenDate &&
+            (o.toDate || o.to_date) >= wardenDate
+        );
+        const isAlert = outOfRangeAlerts.some((a: any) => a.studentId === s.id || a.roll_number === s.id);
+        const status = rec ? 'Present' : leave ? 'On Approved Leave' : isAlert ? 'Out-of-Range Alert' : 'Absent';
+        const time = rec ? rec.timestamp : '--';
+        const enrolled = isStudentFaceEnrolled(s);
+        return [
+          idx + 1,
+          s.roll_number || s.id,
+          s.name,
+          s.year,
+          s.block,
+          s.room || '--',
+          s.student_phone || '--',
+          s.father_phone || '--',
+          wardenDate,
+          status,
+          time,
+          enrolled ? 'FRS Enrolled' : 'Enrollment Pending',
+          enrolled ? (s.face_enrolled_at || 'Verified (Prior)') : '--',
+        ];
+      });
+    }
+
+    const csvContent = buildExcelCsv(headers, rows);
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = csvExportMeta.filename;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast(
+      `CSV Exported (${csvExportMeta.count} rows)`,
+      `Downloaded ${csvExportMeta.filename} (all numbers formatted as text).`
+    );
+  };
 
   return (
     <div className="min-h-screen flex flex-col antialiased bg-cream text-slate-800 font-sans selection:bg-coral selection:text-white">
@@ -3996,6 +4311,61 @@ export const ZostelHostelPortal: React.FC = () => {
                     </div>
                   </div>
 
+                  {/* Attendance Status Filter Pills (Synced with Table & CSV) */}
+                  <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <span className="block text-[11px] font-extrabold uppercase tracking-wider text-slate-400 mb-2">
+                        Filter by Attendance Status (Table & CSV)
+                      </span>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setWardenActiveTab('all')}
+                          className={`px-4 py-2 rounded-full text-xs font-bold transition shadow-sm ${
+                            wardenActiveTab === 'all'
+                              ? 'bg-slate-900 text-white'
+                              : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                          }`}
+                        >
+                          All Residents ({filteredStudents.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setWardenActiveTab('present')}
+                          className={`px-4 py-2 rounded-full text-xs font-bold transition shadow-sm ${
+                            wardenActiveTab === 'present'
+                              ? 'bg-emerald-600 text-white'
+                              : 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+                          }`}
+                        >
+                          Present ({presentList.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setWardenActiveTab('absent')}
+                          className={`px-4 py-2 rounded-full text-xs font-bold transition shadow-sm ${
+                            wardenActiveTab === 'absent'
+                              ? 'bg-coral text-white'
+                              : 'bg-orange-50 text-coral border border-orange-200 hover:bg-orange-100'
+                          }`}
+                        >
+                          Absent ({absentList.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setWardenActiveTab('outpass')}
+                          className={`px-4 py-2 rounded-full text-xs font-bold transition shadow-sm ${
+                            wardenActiveTab === 'outpass'
+                              ? 'bg-sky-600 text-white'
+                              : 'bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100'
+                          }`}
+                        >
+                          Outpasses ({filteredOutpasses.length})
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Date, Search, and CSV Export Row */}
                   <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
                     <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 flex-1">
@@ -4055,11 +4425,13 @@ export const ZostelHostelPortal: React.FC = () => {
                     </div>
 
                     <button
+                      type="button"
                       onClick={exportAttendanceCSV}
-                      className="px-5 py-2.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-extrabold flex items-center justify-center gap-2 shadow-sm transition"
+                      title="Downloads only the currently selected filters with all numbers formatted as Excel text"
+                      className="px-5 py-2.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-extrabold flex items-center justify-center gap-2 shadow-sm transition shrink-0"
                     >
                       <Download className="w-4 h-4 text-amber-400" />
-                      <span>Export Daily CSV</span>
+                      <span>Export CSV ({csvExportMeta.summary})</span>
                     </button>
                   </div>
 
@@ -4456,6 +4828,17 @@ export const ZostelHostelPortal: React.FC = () => {
                   {/* TAB 1: PRESENT STUDENTS */}
                   {wardenActiveTab === 'present' && (
                     <div className="p-6 overflow-x-auto">
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-3 pb-2 border-b border-slate-100 text-[11px] font-semibold text-slate-500">
+                        <span>Verified Present Residents ({presentList.length})</span>
+                        <button
+                          type="button"
+                          onClick={exportAttendanceCSV}
+                          className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold flex items-center gap-1.5 shadow-xs transition"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>Export Present CSV ({presentList.length})</span>
+                        </button>
+                      </div>
                       <table className="w-full text-left border-collapse">
                         <thead>
                           <tr className="border-b border-slate-200 text-[11px] font-extrabold uppercase tracking-wider text-slate-400">
@@ -4648,13 +5031,23 @@ export const ZostelHostelPortal: React.FC = () => {
                   {/* TAB 2: PENDING / ABSENT STUDENTS */}
                   {wardenActiveTab === 'absent' && (
                     <div className="p-6 overflow-x-auto">
-                      <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-100 text-[11px] font-semibold text-slate-500">
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-3 pb-2 border-b border-slate-100 text-[11px] font-semibold text-slate-500">
                         <span>Pending Check-In / Absent Residents</span>
-                        <span>
-                          {absentList.length === 0
-                            ? '0 residents'
-                            : `Showing ${absentStartIdx + 1}–${absentStartIdx + paginatedAbsent.length} of ${absentList.length} resident(s)`}
-                        </span>
+                        <div className="flex items-center gap-3">
+                          <span>
+                            {absentList.length === 0
+                              ? '0 residents'
+                              : `Showing ${absentStartIdx + 1}–${absentStartIdx + paginatedAbsent.length} of ${absentList.length} resident(s)`}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={exportAttendanceCSV}
+                            className="px-3 py-1.5 rounded-xl bg-coral hover:bg-coral-dark text-white text-xs font-extrabold flex items-center gap-1.5 shadow-xs transition"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            <span>Export Absent CSV ({absentList.length})</span>
+                          </button>
+                        </div>
                       </div>
                       <table className="w-full text-left border-collapse">
                         <thead>
